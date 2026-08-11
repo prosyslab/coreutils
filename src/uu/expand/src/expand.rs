@@ -307,18 +307,18 @@ fn next_tabstop(tabstops: &[usize], col: usize, remaining_mode: &RemainingMode) 
     let num_tabstops = tabstops.len();
     match remaining_mode {
         RemainingMode::Plus => {
-            if let Some(t) = tabstops[0..num_tabstops - 1].iter().find(|&&t| t > col) {
+            if let Some(&t) = unsafe { tabstops.get_unchecked(0..num_tabstops - 1) }.iter().find(|&&t| t > col) {
                 t - col
             } else {
-                let step_size = tabstops[num_tabstops - 1];
-                let last_fixed_tabstop = tabstops[num_tabstops - 2];
+                let step_size = unsafe { *tabstops.get_unchecked(num_tabstops - 1) };
+                let last_fixed_tabstop = unsafe { *tabstops.get_unchecked(num_tabstops - 2) };
                 let characters_since_last_tabstop = col - last_fixed_tabstop;
 
                 step_size - characters_since_last_tabstop % step_size
             }
         }
         RemainingMode::Slash => {
-            if let Some(t) = tabstops[0..num_tabstops - 1].iter().find(|&&t| t > col) {
+            if let Some(&t) = unsafe { tabstops.get_unchecked(0..num_tabstops - 1) }.iter().find(|&&t| t > col) {
                 t - col
             } else {
                 tabstops[num_tabstops - 1] - col % tabstops[num_tabstops - 1]
@@ -430,7 +430,9 @@ fn expand_buf(
                 if init || !options.iflag {
                     write_spaces(output, nts)?;
                 } else {
-                    output.write_all(&buf[byte..byte + nbytes])?;
+                    unsafe {
+                        output.write_all(&buf.get_unchecked(byte..byte + nbytes))?;
+                    }
                 }
             }
             Backspace => {
@@ -442,7 +444,9 @@ fn expand_buf(
                     init = false;
                 }
 
-                output.write_all(&buf[byte..byte + nbytes])?;
+                unsafe {
+                    output.write_all(&buf.get_unchecked(byte..byte + nbytes))?;
+                }
             }
             Other => {
                 *col += cwidth;
@@ -458,7 +462,9 @@ fn expand_buf(
                     init = true;
                 }
 
-                output.write_all(&buf[byte..byte + nbytes])?;
+                unsafe {
+                    output.write_all(&buf.get_unchecked(byte..byte + nbytes))?;
+                }
             }
         }
 
@@ -468,6 +474,7 @@ fn expand_buf(
     Ok(())
 }
 
+#[inline(never)]
 fn expand_file(
     file: &OsString,
     output: &mut BufWriter<std::io::Stdout>,
