@@ -441,7 +441,8 @@ fn process_ascii_line<W: Write>(line: &[u8], ctx: &mut FoldContext<'_, W>) -> UR
                 {
                     idx += 1;
                 }
-                push_ascii_segment(&line[start..idx], ctx)?;
+                let segment = unsafe { line.get_unchecked(start..idx) };
+                push_ascii_segment(segment, ctx)?;
             }
         }
     }
