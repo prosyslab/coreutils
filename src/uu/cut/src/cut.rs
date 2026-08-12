@@ -91,7 +91,8 @@ fn cut_bytes<R: Read, W: Write>(
             // change `low` from 1-indexed value to 0-index value
             let low = low - 1;
             let high = high.min(line.len());
-            out.write_all(&line[low..high])?;
+            // SAFETY: `low <= line.len()` was checked above and `high` is capped.
+            out.write_all(unsafe { line.get_unchecked(low..high) })?;
         }
         out.write_all(&[newline_char])?;
         Ok(true)

@@ -482,7 +482,8 @@ fn unexpand_buf(
             // In default mode (not -a), we only convert leading spaces
             // So we can batch process them and then copy the rest
             while byte < buf.len() {
-                match buf[byte] {
+                // SAFETY: the loop condition establishes `byte < buf.len()`.
+                match unsafe { *buf.get_unchecked(byte) } {
                     b' ' => {
                         print_state.col += 1;
                         byte += 1;
@@ -534,7 +535,8 @@ fn unexpand_buf(
                 };
 
                 if !tabs_buffered {
-                    output.write_all(&buf[byte..byte + nbytes])?;
+                    // SAFETY: `next_char_info` returns a character width within `buf`.
+                    output.write_all(unsafe { buf.get_unchecked(byte..byte + nbytes) })?;
                     print_state.scol = print_state.col; // now printed up to this column
                 }
             }

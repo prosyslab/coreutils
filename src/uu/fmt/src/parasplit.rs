@@ -635,7 +635,8 @@ impl WordSplit<'_> {
             .iter()
             .position(|&b| !is_fmt_whitespace_byte(b))
             .unwrap_or(bytes.len());
-        let trimmed = &bytes[start..];
+        // SAFETY: `position` returns an offset into `bytes`, or `bytes.len()`.
+        let trimmed = unsafe { bytes.get_unchecked(start..) };
         WordSplit {
             opts,
             bytes: trimmed,

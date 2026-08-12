@@ -466,7 +466,8 @@ impl Read for Input<'_> {
         let mut base_idx = 0;
         let target_len = buf.len();
         loop {
-            match self.src.read(&mut buf[base_idx..]) {
+            // SAFETY: `base_idx` starts at zero and only advances by read lengths.
+            match self.src.read(unsafe { buf.get_unchecked_mut(base_idx..) }) {
                 Ok(0) => return Ok(base_idx),
                 Ok(rlen) if self.settings.iflags.fullblock => {
                     base_idx += rlen;
@@ -981,7 +982,8 @@ impl<'a> Output<'a> {
         let full_len = chunk.len();
         let mut base_idx = 0;
         loop {
-            match self.dst.write(&chunk[base_idx..]) {
+            // SAFETY: `base_idx` starts at zero and only advances by write lengths.
+            match self.dst.write(unsafe { chunk.get_unchecked(base_idx..) }) {
                 Ok(wlen) => {
                     base_idx += wlen;
                     // take iflags.fullblock as oflags shall not have this option

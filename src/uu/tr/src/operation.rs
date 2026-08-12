@@ -768,7 +768,8 @@ where
 
         // Process the buffer and collect translated chars to output
         output_buf.clear();
-        for &byte in &buf[..length] {
+        // SAFETY: Read implementations return at most `buf.len()` bytes.
+        for &byte in unsafe { buf.get_unchecked(..length) } {
             if let Some(translated) = translator.translate(byte) {
                 output_buf.push(translated);
             }

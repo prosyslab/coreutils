@@ -211,17 +211,20 @@ fn buffer_tac(data: &[u8], before: bool, separator: &OsStr) -> std::io::Result<(
     // the line (as in "/abc/def").
     for i in memmem::rfind_iter(data, separator.as_encoded_bytes()) {
         if before {
-            out.write_all(&data[i..following_line_start])?;
+            // SAFETY: reverse separator matches keep both offsets within `data`.
+            out.write_all(unsafe { data.get_unchecked(i..following_line_start) })?;
             following_line_start = i;
         } else {
-            out.write_all(&data[i + slen..following_line_start])?;
+            // SAFETY: separator length and match offsets keep this range in bounds.
+            out.write_all(unsafe { data.get_unchecked(i + slen..following_line_start) })?;
             following_line_start = i + slen;
         }
     }
 
     // After the loop terminates, write whatever bytes are remaining at
     // the beginning of the buffer.
-    out.write_all(&data[0..following_line_start])?;
+    // SAFETY: `following_line_start` is initialized from and bounded by `data`.
+    out.write_all(unsafe { data.get_unchecked(..following_line_start) })?;
     out.flush()?;
     Ok(())
 }

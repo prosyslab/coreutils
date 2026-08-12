@@ -319,8 +319,10 @@ fn fast_print_seq(
     let mut start = num_end - first_str.len();
 
     // Initialize buf with first and separator.
-    buf[start..num_end].copy_from_slice(first_str.as_bytes());
-    buf[num_end..].copy_from_slice(separator.as_encoded_bytes());
+    // SAFETY: `start` and `num_end` were computed for these fixed buffer segments.
+    unsafe { buf.get_unchecked_mut(start..num_end) }.copy_from_slice(first_str.as_bytes());
+    // SAFETY: `num_end` divides the two initialized buffer segments.
+    unsafe { buf.get_unchecked_mut(num_end..) }.copy_from_slice(separator.as_encoded_bytes());
 
     // Normally, if padding is > 0, it should be equal to last_length,
     // so start would be == 0, but there are corner cases.
@@ -331,11 +333,13 @@ fn fast_print_seq(
     let inc_str = inc_str.as_bytes();
 
     for _ in 0..loop_cnt {
-        stdout.write_all(&buf[start..])?;
+        // SAFETY: `fast_inc` maintains `start` within `buf`.
+        stdout.write_all(unsafe { buf.get_unchecked(start..) })?;
         fast_inc(buf, &mut start, num_end, inc_str);
     }
     // Write the last number without separator, but with terminator.
-    stdout.write_all(&buf[start..num_end])?;
+    // SAFETY: `fast_inc` maintains `start <= num_end`.
+    stdout.write_all(unsafe { buf.get_unchecked(start..num_end) })?;
     stdout.write_all(terminator.as_encoded_bytes())?;
     stdout.flush()?;
     Ok(())

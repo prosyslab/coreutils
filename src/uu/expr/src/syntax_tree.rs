@@ -522,7 +522,8 @@ fn evaluate_match_expression(left_bytes: Vec<u8>, right_bytes: Vec<u8>) -> ExprR
         if pos.is_some()
             && let Some((start, end)) = region.pos(1)
         {
-            let capture_bytes = &left_bytes[start..end];
+            // SAFETY: the regex capture offsets refer to `left_bytes`.
+            let capture_bytes = unsafe { left_bytes.get_unchecked(start..end) };
             return Ok(MaybeNonUtf8String::from(capture_bytes.to_vec()).into());
         }
     }

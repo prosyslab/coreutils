@@ -28,10 +28,13 @@ fn bsd_sum(mut reader: impl Read) -> std::io::Result<(usize, u16)> {
             Ok(0) => break,
             Ok(n) => {
                 bytes_read += n;
-                checksum = buf[..n].iter().fold(checksum, |acc, &byte| {
-                    let rotated = acc.rotate_right(1);
-                    rotated.wrapping_add(u16::from(byte))
-                });
+                // SAFETY: Read implementations return at most `buf.len()` bytes.
+                checksum = unsafe { buf.get_unchecked(..n) }
+                    .iter()
+                    .fold(checksum, |acc, &byte| {
+                        let rotated = acc.rotate_right(1);
+                        rotated.wrapping_add(u16::from(byte))
+                    });
             }
             Err(e) if e.kind() == ErrorKind::Interrupted => (),
             Err(e) => return Err(e),

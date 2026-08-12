@@ -305,7 +305,9 @@ where
         let bytes_to_read_this_loop =
             bytes_remaining_to_search.min(buffer.len().try_into().unwrap());
         let read_start_offset = bytes_remaining_to_search - bytes_to_read_this_loop;
-        let buffer = &mut buffer[..bytes_to_read_this_loop.try_into().unwrap()];
+        // SAFETY: the requested size is capped at `buffer.len()` above.
+        let buffer =
+            unsafe { buffer.get_unchecked_mut(..bytes_to_read_this_loop.try_into().unwrap()) };
         bytes_remaining_to_search -= bytes_to_read_this_loop;
 
         input.seek(SeekFrom::Start(read_start_offset))?;
