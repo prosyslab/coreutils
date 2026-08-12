@@ -682,7 +682,8 @@ fn wipe_file(
 
         // --zero specifies whether we want one final pass of 0x00 on our file
         if zero {
-            pass_sequence.push(PassType::Pattern(PATTERNS[0]));
+            // SAFETY: PATTERNS is a non-empty static pattern table.
+            pass_sequence.push(PassType::Pattern(unsafe { *PATTERNS.get_unchecked(0) }));
         }
     }
 

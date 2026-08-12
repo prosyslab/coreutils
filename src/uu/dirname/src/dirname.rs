@@ -54,16 +54,21 @@ fn dirname_string_manipulation(path_bytes: &[u8]) -> &[u8] {
     }
 
     while bytes.len() > 1 && bytes.ends_with(b"/") {
-        bytes = &bytes[..bytes.len() - 1];
+        // SAFETY: the loop condition establishes `bytes.len() > 1`.
+        bytes = unsafe { bytes.get_unchecked(..bytes.len() - 1) };
     }
 
     // Step 2: Check if it ends with `/.` and strip the `/+.` pattern
     if bytes.ends_with(b".") && bytes.len() >= 2 {
         let dot_pos = bytes.len() - 1;
-        if bytes[dot_pos - 1] == b'/' {
+        // SAFETY: `bytes.len() >= 2`, so `dot_pos - 1` is in bounds.
+        if unsafe { *bytes.get_unchecked(dot_pos - 1) } == b'/' {
             // Find where the slashes before the dot start
             let mut slash_start = dot_pos - 1;
-            while slash_start > 0 && bytes[slash_start - 1] == b'/' {
+            while slash_start > 0
+                // SAFETY: the condition establishes `slash_start - 1` is in bounds.
+                && unsafe { *bytes.get_unchecked(slash_start - 1) } == b'/'
+            {
                 slash_start -= 1;
             }
             // Return the stripped result
@@ -75,14 +80,16 @@ fn dirname_string_manipulation(path_bytes: &[u8]) -> &[u8] {
                     b"."
                 };
             }
-            return &bytes[..slash_start];
+            // SAFETY: `slash_start` was derived from an in-bounds byte index.
+            return unsafe { bytes.get_unchecked(..slash_start) };
         }
     }
 
     // Step 3: Normal dirname - find last / and remove everything after it
     if let Some(last_slash_pos) = bytes.iter().rposition(|&b| b == b'/') {
         // Found a slash, remove everything after it
-        let mut result = &bytes[..last_slash_pos];
+        // SAFETY: `last_slash_pos` was returned by an iterator over `bytes`.
+        let mut result = unsafe { bytes.get_unchecked(..last_slash_pos) };
 
         // Strip trailing slashes from result (but keep at least one if at the start)
         while result.len() > 1 && result.ends_with(b"/") {

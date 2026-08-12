@@ -661,7 +661,8 @@ impl<'a> State<'a> {
 
     /// Gets the key value of the lines stored in seq.
     fn get_current_key(&self) -> Option<&[u8]> {
-        self.seq[0].get_field(self.key)
+        // SAFETY: callers only request the current key while state has a line.
+        unsafe { self.seq.get_unchecked(0) }.get_field(self.key)
     }
 
     fn write_line<Sep: Separator>(

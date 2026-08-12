@@ -392,7 +392,8 @@ fn forwards_thru_file(
             Ok(0) => return Ok(total),
             Ok(n) => {
                 // Use memchr_iter since it greatly improves search performance.
-                for offset in memchr_iter(delimiter, &buf[..n]) {
+                // SAFETY: Read implementations return at most `buf.len()` bytes.
+                for offset in memchr_iter(delimiter, unsafe { buf.get_unchecked(..n) }) {
                     count += 1;
                     if count == num_delimiters {
                         // Return offset of the byte after the `delimiter` instance.

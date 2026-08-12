@@ -205,16 +205,20 @@ pub(crate) fn count_bytes_chars_and_lines_fast<
                 }
                 if COUNT_CHARS {
                     total.chars += if simd_allowed {
-                        bytecount::num_chars(&buf[..n])
+                        // SAFETY: Read implementations return at most `buf.len()` bytes.
+                        bytecount::num_chars(unsafe { buf.get_unchecked(..n) })
                     } else {
-                        bytecount::naive_num_chars(&buf[..n])
+                        // SAFETY: Read implementations return at most `buf.len()` bytes.
+                        bytecount::naive_num_chars(unsafe { buf.get_unchecked(..n) })
                     };
                 }
                 if COUNT_LINES {
                     total.lines += if simd_allowed {
-                        bytecount::count(&buf[..n], b'\n')
+                        // SAFETY: Read implementations return at most `buf.len()` bytes.
+                        bytecount::count(unsafe { buf.get_unchecked(..n) }, b'\n')
                     } else {
-                        bytecount::naive_count(&buf[..n], b'\n')
+                        // SAFETY: Read implementations return at most `buf.len()` bytes.
+                        bytecount::naive_count(unsafe { buf.get_unchecked(..n) }, b'\n')
                     };
                 }
             }

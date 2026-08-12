@@ -936,13 +936,15 @@ fn path_is_current_or_parent_directory(path: &Path) -> bool {
 
     // Strip all trailing separators
     let trimmed = match bytes.iter().rposition(|&b| !is_separator(b)) {
-        Some(i) => &bytes[..=i],
+        // SAFETY: `i` was returned by an iterator over `bytes`.
+        Some(i) => unsafe { bytes.get_unchecked(..=i) },
         None => return false, // all separators or empty
     };
 
     // Extract the last component (after the last separator)
     let last = match trimmed.iter().rposition(|&b| is_separator(b)) {
-        Some(i) => &trimmed[i + 1..],
+        // SAFETY: `i` was returned by an iterator over `trimmed`.
+        Some(i) => unsafe { trimmed.get_unchecked(i + 1..) },
         None => trimmed,
     };
 

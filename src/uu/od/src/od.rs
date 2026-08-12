@@ -688,7 +688,8 @@ fn write_bytes(
                 output_text,
                 "{:>width$}",
                 "",
-                width = f.spacing[b % output_info.byte_size_block]
+                // SAFETY: formatter spacing has one entry per byte in the block.
+                width = unsafe { *f.spacing.get_unchecked(b % output_info.byte_size_block) }
             )
             .unwrap();
 

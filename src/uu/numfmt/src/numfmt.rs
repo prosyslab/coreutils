@@ -146,7 +146,8 @@ fn handle_buffer<R: BufRead>(mut input: R, options: &NumfmtOptions) -> UResult<b
 
         let has_terminator = buf.last() == Some(&terminator);
         let line = if has_terminator {
-            &buf[..buf.len() - 1]
+            // SAFETY: a present terminator means `buf` is non-empty.
+            unsafe { buf.get_unchecked(..buf.len() - 1) }
         } else {
             &buf[..]
         };

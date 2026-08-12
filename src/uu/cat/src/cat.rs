@@ -507,7 +507,8 @@ fn print_unbuffered<R: FdReadable>(
             Ok(0) => return Ok(()),
             Ok(n) => {
                 stdout
-                    .write_all(&buf[..n])
+                    // SAFETY: Read implementations return at most `buf.len()` bytes.
+                    .write_all(unsafe { buf.get_unchecked(..n) })
                     .inspect_err(handle_broken_pipe)?;
                 // cannot use rustix::io on Windows
                 // really bad workaround for unbuffered write <https://github.com/uutils/coreutils/issues/12188>

@@ -2662,10 +2662,18 @@ fn compare_by<'a>(
     for selector in &global_settings.selectors {
         let (a_str, b_str) = if selector.needs_selection {
             let selections = (
-                a_line_data.selections
-                    [a.index * global_settings.precomputed.selections_per_line + selection_index],
-                b_line_data.selections
-                    [b.index * global_settings.precomputed.selections_per_line + selection_index],
+                // SAFETY: line metadata is precomputed for every selected field.
+                unsafe {
+                    *a_line_data.selections.get_unchecked(
+                        a.index * global_settings.precomputed.selections_per_line + selection_index,
+                    )
+                },
+                // SAFETY: line metadata is precomputed for every selected field.
+                unsafe {
+                    *b_line_data.selections.get_unchecked(
+                        b.index * global_settings.precomputed.selections_per_line + selection_index,
+                    )
+                },
             );
             selection_index += 1;
             selections

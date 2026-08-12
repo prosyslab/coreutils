@@ -144,8 +144,12 @@ impl Uniq {
         second_line: &[u8],
         second_meta: &LineMeta,
     ) -> bool {
-        let first_slice = &first_line[first_meta.key_start..first_meta.key_end];
-        let second_slice = &second_line[second_meta.key_start..second_meta.key_end];
+        // SAFETY: line metadata records ranges produced while parsing each line.
+        let first_slice =
+            unsafe { first_line.get_unchecked(first_meta.key_start..first_meta.key_end) };
+        // SAFETY: line metadata records ranges produced while parsing each line.
+        let second_slice =
+            unsafe { second_line.get_unchecked(second_meta.key_start..second_meta.key_end) };
 
         if self.ignore_case {
             first_slice.eq_ignore_ascii_case(second_slice)
