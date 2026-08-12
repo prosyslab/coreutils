@@ -451,6 +451,7 @@ fn escape(s: &str) -> String {
     result
 }
 
+#[inline(never)]
 fn generate_dircolors_config() -> String {
     let mut config = String::new();
 

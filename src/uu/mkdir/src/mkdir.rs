@@ -177,6 +177,7 @@ fn exec(dirs: ValuesRef<OsString>, config: &Config) {
 ///
 /// To match the GNU behavior, a path with the last directory being a single dot
 /// (like `some/path/to/.`) is created (with the dot stripped).
+#[inline(never)]
 pub fn mkdir(path: &Path, config: &Config) -> UResult<()> {
     if path.as_os_str().is_empty() {
         return Err(USimpleError::new(

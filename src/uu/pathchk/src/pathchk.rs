@@ -129,6 +129,7 @@ pub fn uu_app() -> Command {
 }
 
 /// check a path, given as a slice of it's components and an operating mode
+#[inline(never)]
 fn check_path(mode: &Mode, path: &[String]) -> bool {
     match *mode {
         Mode::Basic => check_basic(path),

@@ -494,6 +494,7 @@ pub fn uu_app() -> Command {
 }
 
 /// Loops through the input line by line, calling `write_bytes` to take care of the output.
+#[inline(never)]
 fn odfunc<I, W>(
     input_offset: &mut InputOffset,
     input_decoder: &mut InputDecoder<I>,

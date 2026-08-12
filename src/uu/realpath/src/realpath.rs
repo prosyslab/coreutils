@@ -286,6 +286,7 @@ fn canonicalize_relative(
 ///
 /// This function returns an error if there is a problem resolving
 /// symbolic links.
+#[inline(never)]
 fn resolve_path(
     p: &Path,
     line_ending: LineEnding,

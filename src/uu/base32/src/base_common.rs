@@ -156,6 +156,7 @@ pub fn get_input(config: &Config) -> UResult<Box<dyn BufRead>> {
         }
     }
 }
+#[inline(never)]
 pub fn handle_input<R: BufRead>(input: &mut R, format: Format, config: Config) -> UResult<()> {
     // Always allow padding for Base64 to avoid a full pre-scan of the input.
     let supports_fast_decode_and_encode =

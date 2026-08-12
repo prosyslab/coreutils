@@ -156,6 +156,7 @@ where
     ret
 }
 
+#[inline(never)]
 fn do_csplit<I>(
     split_writer: &mut SplitWriter,
     patterns: Vec<patterns::Pattern>,

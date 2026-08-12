@@ -973,6 +973,7 @@ pub fn uu_app() -> Command {
         )
 }
 
+#[inline(never)]
 fn exec<Sep: Separator>(
     file1: &OsString,
     file2: &OsString,

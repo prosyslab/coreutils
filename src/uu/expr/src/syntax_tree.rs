@@ -505,6 +505,7 @@ fn find_match(regex: Regex, re_string: String, left_bytes: Vec<u8>) -> String {
 }
 
 /// Evaluate a match expression with locale-aware regex matching
+#[inline(never)]
 fn evaluate_match_expression(left_bytes: Vec<u8>, right_bytes: Vec<u8>) -> ExprResult<NumOrStr> {
     use uucore::i18n::UEncoding;
 

@@ -748,6 +748,7 @@ impl SymbolTranslator for SqueezeOperation {
     }
 }
 
+#[inline(never)]
 pub fn translate_input<T, R, W>(input: &mut R, output: &mut W, mut translator: T) -> UResult<()>
 where
     T: SymbolTranslator,

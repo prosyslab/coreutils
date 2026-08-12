@@ -1084,6 +1084,7 @@ fn apply_change_directory(opts: &Options<'_>) -> Result<(), Box<dyn UError>> {
     Ok(())
 }
 
+#[inline(never)]
 fn apply_specified_env_vars(opts: &Options<'_>) {
     // set specified env vars
     for (name, val) in &opts.sets {

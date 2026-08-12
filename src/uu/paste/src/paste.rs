@@ -83,6 +83,7 @@ pub fn uu_app() -> Command {
 }
 
 #[allow(clippy::cognitive_complexity)]
+#[inline(never)]
 fn paste(
     filenames: Vec<OsString>,
     serial: bool,

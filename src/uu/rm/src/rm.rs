@@ -520,6 +520,7 @@ fn count_files_in_directory(p: &Path) -> u64 {
 ///
 /// Behavior is determined by the `options` parameter, see [`Options`] for
 /// details.
+#[inline(never)]
 pub fn remove(files: &[&OsStr], options: &Options) -> bool {
     let mut had_err = false;
 

@@ -140,6 +140,7 @@ pub fn standalone_checksum_app(about: String, usage: String) -> Command {
 
 /// This is the common entrypoint to all checksum utils. Performs some
 /// validation on arguments and proceeds in computing or checking mode.
+#[inline(never)]
 pub fn checksum_main(
     algo: Option<AlgoKind>,
     length: Option<HashLength>,

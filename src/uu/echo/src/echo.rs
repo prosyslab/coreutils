@@ -224,6 +224,7 @@ pub fn uu_app() -> Command {
         )
 }
 
+#[inline(never)]
 fn execute(
     stdout: &mut StdoutLock,
     args: impl Iterator<Item = OsString>,

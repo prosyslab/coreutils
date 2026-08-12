@@ -368,6 +368,7 @@ fn tail_stdin(
 /// let i = forwards_thru_file(&mut reader, 2, b'\n').unwrap();
 /// assert_eq!(i, 2);
 /// ```
+#[inline(never)]
 fn forwards_thru_file(
     reader: &mut impl Read,
     num_delimiters: u64,

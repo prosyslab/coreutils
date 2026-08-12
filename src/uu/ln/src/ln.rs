@@ -270,6 +270,7 @@ pub fn uu_app() -> Command {
 /// Executes the `ln` utility with the given paths and settings.
 ///
 /// This is made public to allow other apps to use `ln` as a library.
+#[inline(never)]
 pub fn exec(files: &[PathBuf], settings: &Settings) -> LnResult<()> {
     // Handle cases where we create links in a directory first.
     if let Some(ref target_path) = settings.target_dir {

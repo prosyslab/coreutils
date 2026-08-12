@@ -388,6 +388,7 @@ fn head_backwards_on_seekable_file(input: &mut File, options: &HeadOptions) -> i
     }
 }
 
+#[inline(never)]
 fn head_file(input: &mut File, options: &HeadOptions) -> io::Result<u64> {
     match options.mode {
         Mode::FirstBytes(n) => print_n_bytes(input, n),

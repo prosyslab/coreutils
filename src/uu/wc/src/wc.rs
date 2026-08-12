@@ -465,6 +465,7 @@ pub fn uu_app() -> Command {
         )
 }
 
+#[inline(never)]
 fn word_count_from_reader<T: WordCountable>(
     mut reader: T,
     settings: &Settings,

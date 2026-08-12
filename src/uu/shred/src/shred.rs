@@ -595,6 +595,7 @@ fn create_standard_pass_sequence(num_passes: usize) -> Vec<PassType> {
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::cognitive_complexity)]
+#[inline(never)]
 fn wipe_file(
     path_str: &OsString,
     n_passes: usize,

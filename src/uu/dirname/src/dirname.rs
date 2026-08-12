@@ -39,6 +39,7 @@ mod options {
 /// - GNU: <https://www.gnu.org/software/coreutils/manual/html_node/dirname-invocation.html>
 ///
 /// See issue #8910 and similar fix in basename (#8373, commit c5268a897).
+#[inline(never)]
 fn dirname_string_manipulation(path_bytes: &[u8]) -> &[u8] {
     if path_bytes.is_empty() {
         return b".";

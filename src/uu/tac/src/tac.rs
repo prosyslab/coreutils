@@ -186,6 +186,7 @@ fn buffer_tac_regex(
 /// If `before` is `true`, then this function assumes that the
 /// `separator` appears at the beginning of each line, as in
 /// `"/abc/def"`.
+#[inline(never)]
 fn buffer_tac(data: &[u8], before: bool, separator: &OsStr) -> std::io::Result<()> {
     let out = stdout();
     let mut out = BufWriter::new(out.lock());

@@ -559,6 +559,7 @@ fn handle_multiple_paths(paths: &[PathBuf], opts: &Options) -> UResult<()> {
 /// Execute the mv command. This moves 'source' to 'target', where
 /// 'target' is a directory. If 'target' does not exist, and source is a single
 /// file or directory, then 'source' will be renamed to 'target'.
+#[inline(never)]
 pub fn mv(files: &[OsString], opts: &Options) -> UResult<()> {
     let paths = parse_paths(files, opts);
 

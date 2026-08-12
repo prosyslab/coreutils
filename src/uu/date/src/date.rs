@@ -746,6 +746,7 @@ fn substitute_epoch_seconds(fmt: &str, date: &Zoned) -> String {
     out
 }
 
+#[inline(never)]
 fn format_date_with_locale_aware_months(
     date: &Zoned,
     format_string: &str,

@@ -323,6 +323,7 @@ fn get_all_filesystems(opt: &Options) -> UResult<Vec<Filesystem>> {
 }
 
 /// For each path, get the filesystem that contains that path.
+#[inline(never)]
 fn get_named_filesystems<P>(paths: &[P], opt: &Options) -> UResult<Vec<Filesystem>>
 where
     P: AsRef<Path>,

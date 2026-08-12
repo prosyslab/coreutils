@@ -56,6 +56,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     tee(&options).map_err(|_| 1.into())
 }
 
+#[inline(never)]
 fn tee(options: &Options) -> Result<(), ()> {
     #[cfg(unix)]
     if options.ignore_interrupts {

@@ -52,6 +52,7 @@ pub fn uu_app() -> Command {
         )
 }
 
+#[inline(never)]
 fn sleep(args: &[&str]) -> UResult<()> {
     let mut arg_error = false;
 

@@ -127,6 +127,7 @@ fn handle_args<'a>(args: impl Iterator<Item = &'a [u8]>, options: &NumfmtOptions
 /// Process lines read from stdin.
 ///
 /// Returns `true` if any line contained invalid input.
+#[inline(never)]
 fn handle_buffer<R: BufRead>(mut input: R, options: &NumfmtOptions) -> UResult<bool> {
     let terminator = if options.zero_terminated { 0u8 } else { b'\n' };
     let mut stdout = std::io::stdout().lock();

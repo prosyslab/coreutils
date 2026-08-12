@@ -412,6 +412,7 @@ fn handle_write_error(e: io::Error) -> Box<dyn uucore::error::UError> {
     e.map_err_context(move || ctx)
 }
 
+#[inline(never)]
 fn shuf_exec(
     input: &mut impl Shufable,
     opts: &Options,

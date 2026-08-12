@@ -285,6 +285,7 @@ struct FileContent {
 
 type FileMap = Vec<(OsString, FileContent)>;
 
+#[inline(never)]
 fn read_input(input_files: &[OsString], config: &Config) -> UResult<FileMap> {
     let mut file_map: FileMap = FileMap::new();
     let mut offset: usize = 0;

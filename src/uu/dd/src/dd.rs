@@ -1120,6 +1120,7 @@ fn flush_caches_full_length(i: &Input, o: &Output) {
 ///
 /// If there is a problem reading from the input or writing to
 /// this output.
+#[inline(never)]
 fn dd_copy(mut i: Input, o: Output) -> io::Result<()> {
     // The read and write statistics.
     //

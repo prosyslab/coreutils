@@ -563,6 +563,7 @@ fn unexpand_buf(
     Ok(())
 }
 
+#[inline(never)]
 fn unexpand_file(
     file: &OsString,
     output: &mut BufWriter<Stdout>,

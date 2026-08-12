@@ -76,6 +76,7 @@ pub fn uumain(mut args: impl uucore::Args) -> UResult<()> {
 
 /// Evaluate a stack of Symbols, returning the result of the evaluation or
 /// an error message if evaluation failed.
+#[inline(never)]
 fn eval(stack: &mut Vec<Symbol>) -> ParseResult<bool> {
     macro_rules! pop_literal {
         () => {

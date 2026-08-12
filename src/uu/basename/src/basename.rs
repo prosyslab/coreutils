@@ -123,6 +123,7 @@ pub fn uu_app() -> Command {
 
 // We return a Vec<u8>. Returning a seemingly more proper `OsString` would
 // require back and forth conversions as we need a &[u8] for printing anyway.
+#[inline(never)]
 fn basename(fullname: &OsString, suffix: &OsString) -> UResult<Vec<u8>> {
     let fullname_bytes = uucore::os_str_as_bytes(fullname)?;
 

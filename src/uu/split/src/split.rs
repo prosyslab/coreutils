@@ -1310,6 +1310,7 @@ fn line_bytes(
     Ok(())
 }
 
+#[inline(never)]
 fn split(settings: &Settings) -> UResult<()> {
     let mut reader = if settings.input == "-" {
         Box::new(stdin()) as Box<dyn Read>

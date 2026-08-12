@@ -456,6 +456,7 @@ fn create_without_truncate(path: &Path) -> std::io::Result<fs::File> {
 /// - `is_stdout` - Stdout is handled specially, see [`update_times`] for more info
 /// - `atime` - Access time to set for the file
 /// - `mtime` - Modification time to set for the file
+#[inline(never)]
 fn touch_file(
     path: &Path,
     is_stdout: bool,

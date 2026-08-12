@@ -1015,6 +1015,7 @@ fn apply_expand_tab(chunk: &mut Vec<u8>, byte: u8, expand_options: &ExpandTabsOp
     }
 }
 
+#[inline(never)]
 fn pr(name: &str, options: &OutputOptions) -> Result<i32, PrError> {
     // Read the entire contents of the file into a buffer.
     //

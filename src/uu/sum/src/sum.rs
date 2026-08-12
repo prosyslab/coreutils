@@ -19,6 +19,7 @@ use uucore::{format_usage, show};
 // Fixed to 8 KiB (equivalent to `std::sys::io::DEFAULT_BUF_SIZE` on most targets)
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
+#[inline(never)]
 fn bsd_sum(mut reader: impl Read) -> std::io::Result<(usize, u16)> {
     let mut buf = [0; DEFAULT_BUF_SIZE];
     let mut bytes_read = 0;

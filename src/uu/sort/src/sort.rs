@@ -2575,6 +2575,7 @@ fn exec(
     }
 }
 
+#[inline(never)]
 fn sort_by<'a>(unsorted: &mut Vec<Line<'a>>, settings: &GlobalSettings, line_data: &LineData<'a>) {
     let cmp = |a: &Line<'a>, b: &Line<'a>| compare_by(a, b, settings, line_data, line_data);
     // WASI does not support threads, so use non-parallel sort to avoid

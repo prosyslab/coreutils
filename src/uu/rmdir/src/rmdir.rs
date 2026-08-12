@@ -96,6 +96,7 @@ struct Error<'a> {
     path: &'a Path,
 }
 
+#[inline(never)]
 fn remove(mut path: &Path, opts: Opts) -> Result<(), Error<'_>> {
     remove_single(path, opts)?;
     if opts.parents {

@@ -129,6 +129,7 @@ struct LoopNode<'a>(&'a str);
 impl UError for TsortError {}
 impl UError for LoopNode<'_> {}
 
+#[inline(never)]
 fn process_input<R: BufRead>(reader: R, graph: &mut Graph) -> Result<(), TsortError> {
     let mut pending: Option<Sym> = None;
 

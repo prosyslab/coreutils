@@ -2507,6 +2507,7 @@ fn calculate_dest_permissions(
 /// The original permissions of `source` will be copied to `dest`
 /// after a successful copy.
 #[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
+#[inline(never)]
 fn copy_file(
     progress_bar: Option<&ProgressBar>,
     source: &Path,

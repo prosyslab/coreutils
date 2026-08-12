@@ -216,6 +216,7 @@ fn do_file_truncate(filename: &Path, create: bool, size: u64) -> UResult<()> {
     )
 }
 
+#[inline(never)]
 fn file_truncate(
     filename: &OsString,
     no_create: bool,

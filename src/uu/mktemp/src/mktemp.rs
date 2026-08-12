@@ -603,6 +603,7 @@ fn make_temp_file(dir: &Path, prefix: &str, rand: usize, suffix: &str) -> UResul
     }
 }
 
+#[inline(never)]
 fn exec(dir: &Path, prefix: &str, rand: usize, suffix: &str, make_dir: bool) -> UResult<PathBuf> {
     let path = if make_dir {
         make_temp_dir(dir, prefix, rand, suffix)?

@@ -208,6 +208,7 @@ impl FmtOptions {
 /// # Returns
 ///
 /// A `UResult<()>` indicating success or failure.
+#[inline(never)]
 fn process_file(
     file_name: &OsString,
     fmt_opts: &FmtOptions,

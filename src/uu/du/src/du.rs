@@ -330,6 +330,7 @@ fn time_from_raw_stat(
 #[cfg(all(unix, not(target_os = "redox")))]
 // Implement safe_du on Unix (except Redox which lacks full stat support)
 // This is done for TOCTOU safety
+#[inline(never)]
 fn safe_du(
     path: &Path,
     options: &TraversalOptions,

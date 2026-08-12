@@ -67,6 +67,7 @@ fn list_to_ranges(list: &str, complement: bool) -> Result<Vec<Range>, String> {
     }
 }
 
+#[inline(never)]
 fn cut_bytes<R: Read, W: Write>(
     reader: R,
     out: &mut W,

@@ -19,6 +19,7 @@ const OPT_LOGICAL: &str = "logical";
 const OPT_PHYSICAL: &str = "physical";
 const ARG_OPERANDS: &str = "operands";
 
+#[inline(never)]
 fn physical_path() -> io::Result<PathBuf> {
     // std::env::current_dir() is a thin wrapper around libc::getcwd().
     let path = env::current_dir()?;

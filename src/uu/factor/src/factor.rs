@@ -40,6 +40,7 @@ enum Number {
     BigUint(BigUint),
 }
 
+#[inline(never)]
 fn write_factors_str(
     num_str: &[u8],
     w: &mut io::BufWriter<impl Write>,
@@ -124,6 +125,7 @@ impl Display for NumError<'_> {
 }
 
 /// Writing out the prime factors for integers
+#[inline(never)]
 fn write_result(
     w: &mut io::BufWriter<impl Write>,
     x: &impl Display,

@@ -72,6 +72,7 @@ macro_rules! write_line_terminator {
 }
 
 impl Uniq {
+    #[inline(never)]
     pub fn write_uniq(&self, mut reader: impl BufRead, mut writer: impl Write) -> UResult<()> {
         let mut first_line_printed = false;
         let mut group_count = 1;

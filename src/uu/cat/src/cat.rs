@@ -396,6 +396,7 @@ fn cat_path(path: &OsString, options: &OutputOptions, state: &mut OutputState) -
     }
 }
 
+#[inline(never)]
 fn cat_files<'a, I>(files: I, options: &OutputOptions) -> UResult<()>
 where
     I: IntoIterator<Item = &'a OsString>,
