@@ -175,6 +175,12 @@ renamed_and_removed_lints = { level = "allow", priority = -1 }
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(fuzzing)',
   'cfg(pgo_training)',
+  'cfg(verus_keep_ghost)',
+  'cfg(uutils_tr_delete)',
+  'cfg(uutils_tr_translate)',
+  'cfg(uutils_tr_squeeze)',
+  'cfg(uutils_tr_delete_and_squeeze)',
+  'cfg(uutils_tr_translate_and_squeeze)',
   'cfg(target_os, values("cygwin"))',
   'cfg(wasi_runner)',
   'cfg(wasip2_runner)',

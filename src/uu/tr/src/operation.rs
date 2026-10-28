@@ -5,7 +5,9 @@
 
 // spell-checker:ignore (strings) anychar combinator Alnum Punct Xdigit alnum punct xdigit cntrl alpah
 
+#[cfg(not(verus_keep_ghost))]
 use crate::unicode_table;
+#[cfg(not(verus_keep_ghost))]
 use nom::{
     IResult, Parser,
     branch::alt,
@@ -15,6 +17,7 @@ use nom::{
     multi::many_m_n,
     sequence::{delimited, preceded, separated_pair, terminated},
 };
+#[cfg(not(verus_keep_ghost))]
 use std::{
     char,
     error::Error,
@@ -22,18 +25,52 @@ use std::{
     io::{BufRead, Write},
     ops::Range,
 };
+#[cfg(not(verus_keep_ghost))]
 use uucore::error::{FromIo, UError, UResult};
+#[cfg(not(verus_keep_ghost))]
 use uucore::translate;
 
+#[cfg(not(verus_keep_ghost))]
 use uucore::show_warning;
 
+#[cfg(verus_keep_ghost)]
+use std::io::{BufRead, Write};
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
+type UResult<T> = std::io::Result<T>;
+#[cfg(verus_keep_ghost)]
+use crate::stream_proof::TranslatorModel;
+#[cfg(verus_keep_ghost)]
+use crate::tr_proof::ChunkModel;
+#[cfg(verus_keep_ghost)]
+use crate::{io_trusted, stream_proof};
+#[cfg(not(verus_keep_ghost))]
+pub trait TranslatorModel {}
+#[cfg(not(verus_keep_ghost))]
+impl<T: ?Sized> TranslatorModel for T {}
+#[cfg(not(verus_keep_ghost))]
+pub trait ChunkModel {}
+#[cfg(not(verus_keep_ghost))]
+impl<T: ?Sized> ChunkModel for T {}
+#[cfg(verus_keep_ghost)]
+verus! { broadcast use vstd::seq_lib::group_seq_properties; }
+#[cfg(not(verus_keep_ghost))]
+pub(crate) use crate::simd::trusted_common::io as io_trusted;
+
 /// Common trait for operations that can process chunks of data
-pub trait ChunkProcessor {
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
+pub trait ChunkProcessor: ChunkModel {
     /// Return the bytes to write: `input` itself when it is left unchanged,
     /// `output` otherwise.
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires self.chunk_valid(), old(output).len() == 0,
+        ensures result@ == self.chunk_output(input@),
+    ))]
     fn process_chunk<'a>(&self, input: &'a [u8], output: &'a mut Vec<u8>) -> &'a [u8];
 }
 
+#[cfg(not(verus_keep_ghost))]
 #[derive(Debug, Clone)]
 pub enum BadSequence {
     MissingCharClassName,
@@ -54,6 +91,7 @@ pub enum BadSequence {
 /// A range endpoint, printed the way the shell would show it: as itself for
 /// printable ASCII — backslash-escaped where Rust escapes it, so `\` and the
 /// quotes come back doubled — and as an octal escape otherwise.
+#[cfg(not(verus_keep_ghost))]
 pub(crate) fn range_endpoint_to_string(ut: u32) -> String {
     match char::from_u32(ut) {
         Some(ch @ '\x20'..='\x7E') => ch.escape_default().to_string(),
@@ -61,6 +99,7 @@ pub(crate) fn range_endpoint_to_string(ut: u32) -> String {
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl Display for BadSequence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -141,8 +180,10 @@ impl Display for BadSequence {
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl Error for BadSequence {}
 
+#[cfg(not(verus_keep_ghost))]
 impl UError for BadSequence {}
 
 /// A [`BadSequence`] together with where it was written.
@@ -150,6 +191,7 @@ impl UError for BadSequence {}
 /// A set is a small language of its own, so naming the set and the sequence
 /// inside it says far more than the message alone: `[:alpah:]` and `[a-Z]` are
 /// both "in SET1", but only one character of each is actually wrong.
+#[cfg(not(verus_keep_ghost))]
 #[derive(Debug, Clone)]
 pub struct SequenceError {
     pub error: BadSequence,
@@ -160,6 +202,7 @@ pub struct SequenceError {
     pub span: Option<Range<usize>>,
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl SequenceError {
     /// A problem with a set taken as a whole.
     fn whole_set(error: BadSequence, set: u8) -> Self {
@@ -171,6 +214,7 @@ impl SequenceError {
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl Display for SequenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The location is for the caret only; the message reads as it always
@@ -179,10 +223,13 @@ impl Display for SequenceError {
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl Error for SequenceError {}
 
+#[cfg(not(verus_keep_ghost))]
 impl UError for SequenceError {}
 
+#[cfg(not(verus_keep_ghost))]
 #[derive(Debug, Clone, Copy)]
 pub enum Class {
     Alnum,
@@ -199,6 +246,7 @@ pub enum Class {
     Xdigit,
 }
 
+#[cfg(not(verus_keep_ghost))]
 #[derive(Debug, Clone, Copy)]
 pub enum Sequence {
     Char(u8),
@@ -208,6 +256,7 @@ pub enum Sequence {
     Class(Class),
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl Sequence {
     pub fn flatten(&self) -> Box<dyn Iterator<Item = u8>> {
         match self {
@@ -503,6 +552,7 @@ impl Sequence {
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl Sequence {
     /// Parse a set, reporting which part of it a bad sequence occupies.
     ///
@@ -771,12 +821,21 @@ impl Sequence {
     }
 }
 
-pub trait SymbolTranslator {
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
+pub trait SymbolTranslator: Sized + TranslatorModel {
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires old(self).valid(),
+        ensures result == old(self).step(current).0,
+            *final(self) == old(self).step(current).1, final(self).valid(),
+    ))]
     fn translate(&mut self, current: u8) -> Option<u8>;
 
     /// Takes two [`SymbolTranslator`]s and creates a new [`SymbolTranslator`] over both in sequence.
     ///
     /// This behaves pretty much identical to [`Iterator::chain`].
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        ensures result.stage_a == self, result.stage_b == other,
+    ))]
     fn chain<T>(self, other: T) -> ChainedSymbolTranslator<Self, T>
     where
         Self: Sized,
@@ -788,20 +847,42 @@ pub trait SymbolTranslator {
     }
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct ChainedSymbolTranslator<A, B> {
-    stage_a: A,
-    stage_b: B,
+    pub stage_a: A,
+    pub stage_b: B,
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+    impl<A: SymbolTranslator, B: SymbolTranslator> TranslatorModel for ChainedSymbolTranslator<A, B> {
+        open spec fn valid(&self) -> bool { self.stage_a.valid() && self.stage_b.valid() }
+        open spec fn step(&self, current: u8) -> (Option<u8>, Self) {
+            let a = self.stage_a.step(current);
+            match a.0 {
+                Some(byte) => {
+                    let b = self.stage_b.step(byte);
+                    (b.0, Self { stage_a: a.1, stage_b: b.1 })
+                },
+                None => (None, Self { stage_a: a.1, stage_b: self.stage_b }),
+            }
+        }
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl<A: SymbolTranslator, B: SymbolTranslator> SymbolTranslator for ChainedSymbolTranslator<A, B> {
+    #[cfg_attr(verus_keep_ghost, verus_spec)]
     fn translate(&mut self, current: u8) -> Option<u8> {
-        self.stage_a
-            .translate(current)
-            .and_then(|c| self.stage_b.translate(c))
+        match self.stage_a.translate(current) {
+            Some(c) => self.stage_b.translate(c),
+            None => None,
+        }
     }
 }
 
 /// Convert a set of bytes to a 256-element bitmap for O(1) lookup
+#[cfg(not(verus_keep_ghost))]
 fn set_to_bitmap(set: &[u8]) -> [bool; 256] {
     let mut bitmap = [false; 256];
     for &byte in set {
@@ -811,12 +892,14 @@ fn set_to_bitmap(set: &[u8]) -> [bool; 256] {
 }
 
 #[derive(Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct DeleteOperation {
-    pub(crate) keep_table: [bool; 256],
+    pub keep_table: [bool; 256],
     /// The byte to delete, when it is the only one.
-    single_delete: Option<u8>,
+    pub single_delete: Option<u8>,
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl DeleteOperation {
     pub fn new(set: Vec<u8>) -> Self {
         use crate::simd::find_single_change;
@@ -830,13 +913,26 @@ impl DeleteOperation {
     }
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+    impl TranslatorModel for DeleteOperation {
+        open spec fn valid(&self) -> bool { true }
+        open spec fn step(&self, current: u8) -> (Option<u8>, Self) {
+            (if self.keep_table@[current as int] { Some(current) } else { None }, *self)
+        }
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl SymbolTranslator for DeleteOperation {
+    #[cfg_attr(verus_keep_ghost, verus_spec)]
     fn translate(&mut self, current: u8) -> Option<u8> {
         // keep if not present in the delete set
         self.keep_table[current as usize].then_some(current)
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl ChunkProcessor for DeleteOperation {
     fn process_chunk<'a>(&self, input: &'a [u8], output: &'a mut Vec<u8>) -> &'a [u8] {
         use crate::simd::{process_delete, process_single_delete};
@@ -852,12 +948,14 @@ impl ChunkProcessor for DeleteOperation {
 }
 
 #[derive(Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct TranslateOperation {
-    pub(crate) translation_table: [u8; 256],
+    pub translation_table: [u8; 256],
     /// The byte to replace and its replacement, when it is the only one.
-    single_change: Option<(u8, u8)>,
+    pub single_change: Option<(u8, u8)>,
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl TranslateOperation {
     pub fn new(set1: Vec<u8>, set2: Vec<u8>) -> Result<Self, BadSequence> {
         // Initialize translation table with identity mapping
@@ -894,33 +992,78 @@ impl TranslateOperation {
     }
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+    impl TranslatorModel for TranslateOperation {
+        open spec fn valid(&self) -> bool { true }
+        open spec fn step(&self, current: u8) -> (Option<u8>, Self) {
+            (Some(self.translation_table@[current as int]), *self)
+        }
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl SymbolTranslator for TranslateOperation {
+    #[cfg_attr(verus_keep_ghost, verus_spec)]
     fn translate(&mut self, current: u8) -> Option<u8> {
         Some(self.translation_table[current as usize])
     }
 }
 
+#[cfg(all(verus_keep_ghost, uutils_tr_translate))]
+verus! {
+    impl ChunkModel for TranslateOperation {
+        open spec fn chunk_valid(&self) -> bool {
+            match self.single_change {
+                Some((source, target)) => forall|b: int| 0 <= b < 256 ==>
+                    self.translation_table@[b] == if b == source as int { target } else { b as u8 },
+                None => true,
+            }
+        }
+        open spec fn chunk_output(&self, input: Seq<u8>) -> Seq<u8> {
+            crate::tr_proof::table_prefix(input, self.translation_table@, input.len() as int)
+        }
+    }
+}
+
+#[cfg(any(not(verus_keep_ghost), uutils_tr_translate))]
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl ChunkProcessor for TranslateOperation {
+    #[cfg_attr(verus_keep_ghost, verus_spec)]
     fn process_chunk<'a>(&self, input: &'a [u8], output: &'a mut Vec<u8>) -> &'a [u8] {
         use crate::simd::process_single_char_replace;
 
         if let Some((source, target)) = self.single_change {
             // Use SIMD-optimized single character replacement
+            #[cfg(verus_keep_ghost)]
+            proof! { crate::proof::single_matches(input@, self.translation_table@, source, target, input@.len() as int); }
             process_single_char_replace(input, output, source, target)
         } else {
             // Standard translation using table lookup
-            output.extend(input.iter().map(|&b| self.translation_table[b as usize]));
+            let mapper = crate::simd::closure_with_spec!(
+                (result: u8 => ensures result == self.translation_table@[b as int],),
+                |b: u8| self.translation_table[b as usize]
+            );
+            crate::simd::extend_mapped(output, input, mapper);
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::table_map(input@, self.translation_table@, output@, input@.len() as int);
+                assert(output@.take(input@.len() as int) =~= output@);
+            }
             output
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+#[cfg_attr(not(verus_keep_ghost), derive(Clone))]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct SqueezeOperation {
-    squeeze_table: [bool; 256],
-    previous: Option<u8>,
+    pub squeeze_table: [bool; 256],
+    pub previous: Option<u8>,
 }
 
+#[cfg(not(verus_keep_ghost))]
 impl SqueezeOperation {
     pub fn new(set1: Vec<u8>) -> Self {
         Self {
@@ -930,7 +1073,20 @@ impl SqueezeOperation {
     }
 }
 
+#[cfg(verus_keep_ghost)]
+verus! {
+    impl TranslatorModel for SqueezeOperation {
+        open spec fn valid(&self) -> bool { true }
+        open spec fn step(&self, current: u8) -> (Option<u8>, Self) {
+            (crate::tr_proof::squeeze_byte(self.previous, current, self.squeeze_table@),
+                Self { squeeze_table: self.squeeze_table, previous: Some(current) })
+        }
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl SymbolTranslator for SqueezeOperation {
+    #[cfg_attr(verus_keep_ghost, verus_spec)]
     fn translate(&mut self, current: u8) -> Option<u8> {
         let next = if self.squeeze_table[current as usize] {
             match self.previous {
@@ -945,6 +1101,20 @@ impl SymbolTranslator for SqueezeOperation {
     }
 }
 
+#[cfg(any(
+    not(verus_keep_ghost),
+    uutils_tr_squeeze,
+    uutils_tr_delete_and_squeeze,
+    uutils_tr_translate_and_squeeze
+))]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires translator.valid(), io_trusted::readable(old(input)), io_trusted::writable(old(output)),
+    ensures result is Ok,
+        io_trusted::remaining(final(input)).len() == 0,
+        io_trusted::written(final(output)) == io_trusted::written(old(output)) +
+            stream_proof::run(translator, io_trusted::remaining(old(input)),
+                io_trusted::remaining(old(input)).len() as int).0,
+))]
 pub fn translate_input<T, R, W>(input: &mut R, output: &mut W, mut translator: T) -> UResult<()>
 where
     T: SymbolTranslator,
@@ -955,32 +1125,93 @@ where
     let mut buf = [0; BUFFER_SIZE];
     let mut output_buf = Vec::with_capacity(BUFFER_SIZE);
 
+    #[cfg(verus_keep_ghost)]
+    proof_decl! {
+        let ghost initial = translator;
+        let ghost bytes = io_trusted::remaining(input);
+        let ghost written = io_trusted::written(output);
+        let ghost offset: int = 0;
+    }
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant
+            0 <= offset <= bytes.len(), translator.valid(),
+            io_trusted::readable(input), io_trusted::writable(output),
+            io_trusted::remaining(input) == bytes.skip(offset),
+            io_trusted::written(output) == written + stream_proof::run(initial, bytes, offset).0,
+            translator == stream_proof::run(initial, bytes, offset).1,
+        ensures
+            io_trusted::remaining(input).len() == 0,
+            offset == bytes.len(),
+            io_trusted::written(output) == written + stream_proof::run(initial, bytes, bytes.len() as int).0,
+        decreases bytes.len() - offset,
+    ))]
     loop {
-        let length = match input.read(&mut buf[..]) {
-            Ok(0) => break, // EOF reached
+        let length = match io_trusted::read(input, &mut buf[..]) {
+            Ok(0) => {
+                #[cfg(verus_keep_ghost)]
+                proof! {
+                    assert(io_trusted::remaining(input).len() == 0);
+                    assert(offset == bytes.len());
+                }
+                break; // EOF reached
+            }
             Ok(len) => len,
+            #[cfg(not(verus_keep_ghost))]
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            #[cfg(not(verus_keep_ghost))]
             Err(e) => return Err(e.map_err_context(|| translate!("tr-error-read-error"))),
+            #[cfg(verus_keep_ghost)]
+            Err(e) => return Err(e),
         };
 
         // Process the buffer and collect translated chars to output
         output_buf.clear();
-        for &byte in &buf[..length] {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! { let ghost start = translator; }
+        #[cfg_attr(verus_keep_ghost, verus_spec(iter =>
+            invariant
+                length <= BUFFER_SIZE,
+                translator.valid(),
+                translator == stream_proof::run(start, buf@.take(length as int), iter.index()).1,
+                output_buf@ == stream_proof::run(start, buf@.take(length as int), iter.index()).0,
+        ))]
+        for current in &buf[..length] {
+            let byte = *current;
             if let Some(translated) = translator.translate(byte) {
                 output_buf.push(translated);
             }
         }
 
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            assert(bytes.take(offset).take(offset) =~= bytes.take(offset));
+            assert(bytes.take(offset + length).take(offset + length) =~= bytes.take(offset + length));
+            assert(buf@.take(length as int) == bytes.subrange(offset, offset + length));
+            assert(bytes.take(offset) + buf@.take(length as int) =~= bytes.take(offset + length));
+            stream_proof::run_append(initial, bytes.take(offset), buf@.take(length as int), length as int);
+            stream_proof::prefix_independent(initial, bytes, bytes.take(offset), offset);
+            stream_proof::prefix_independent(initial, bytes, bytes.take(offset + length), offset + length);
+        }
+
         if !output_buf.is_empty() {
             crate::simd::write_output(output, &output_buf)?;
         }
+        #[cfg(verus_keep_ghost)]
+        proof! { offset = offset + length; }
     }
 
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        assert(io_trusted::remaining(input).len() == 0);
+        assert(offset == bytes.len());
+        assert(io_trusted::written(output) == written + stream_proof::run(initial, bytes, bytes.len() as int).0);
+    }
     Ok(())
 }
 
 /// Platform-specific flush operation
 #[inline]
+#[cfg(not(verus_keep_ghost))]
 pub fn flush_output<W: Write>(output: &mut W) -> UResult<()> {
     #[cfg(not(windows))]
     return output
