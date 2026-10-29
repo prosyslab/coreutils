@@ -5,6 +5,10 @@ name: Check TOML files
 
 on:
   push:
+    branches-ignore:
+      - transplant-verus
+    tags:
+      - '**'
     paths:
       - "**.toml"
   pull_request:

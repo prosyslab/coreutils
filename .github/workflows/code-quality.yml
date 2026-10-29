@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - '*'
+      - '!transplant-verus'
 
 env:
   CARGO_INCREMENTAL: "0"

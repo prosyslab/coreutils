@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - '*'
+      - '!transplant-verus'
     paths:
       - 'util/**/*.sh'
   pull_request:

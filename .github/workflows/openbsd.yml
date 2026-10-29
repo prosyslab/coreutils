@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - '*'
+      - '!transplant-verus'
 
 permissions:
   contents: read # to fetch code (actions/checkout)
