@@ -11,7 +11,7 @@ use std::io::Read;
 use std::iter;
 
 use itertools::Itertools;
-use uucore::error::UResult;
+use crate::SortResult as UResult;
 
 use crate::chunks::{self, Chunk};
 use crate::tmp_dir::TmpDirWrapper;
@@ -20,7 +20,7 @@ use crate::{Line, Output};
 
 /// Sort files by reading all input into memory, sorting in a single thread, and outputting directly.
 pub fn ext_sort(
-    files: &mut impl Iterator<Item = UResult<Box<dyn Read + Send>>>,
+    files: &mut impl Iterator<Item = UResult<crate::InputReader>>,
     settings: &GlobalSettings,
     output: Output,
     _tmp_dir: &mut TmpDirWrapper,

@@ -16,19 +16,24 @@
 
 use crate::custom_str_cmp::is_blank;
 use std::{cmp::Ordering, ops::Range};
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-enum Sign {
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub enum Sign {
     Negative,
     Positive,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct NumInfo {
-    exponent: i64,
-    sign: Sign,
+    pub exponent: i64,
+    pub sign: Sign,
 }
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct NumInfoParseSettings {
     pub accept_si_units: bool,
     /// Also accept lowercase SI units, as with `-f`.
@@ -57,6 +62,16 @@ impl NumInfo {
     /// If the input is not a number (which has to be treated as zero), the returned empty range
     /// will be 0..0.
     #[allow(clippy::cognitive_complexity)]
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires parse_settings.thousands_separator is None,
+            parse_settings.decimal_pt == Some(b'.'), num@.len() <= i64::MAX,
+        ensures result.1.start <= result.1.end <= num.len(),
+            crate::proof::parsing::represents(num@.subrange(result.1.start as int, result.1.end as int),
+                result.0.exponent as int, matches!(result.0.sign, Sign::Negative),
+                crate::proof::comparisons::decimal_model(num@, parse_settings.accept_si_units, parse_settings.fold_si_units),
+                parse_settings.accept_si_units),
+    ))]
     pub fn parse(num: &[u8], parse_settings: &NumInfoParseSettings) -> (Self, Range<usize>) {
         let mut exponent = -1;
         let mut had_decimal_pt = false;
@@ -66,15 +81,63 @@ impl NumInfo {
 
         let mut first_char = true;
 
-        for (idx, &char) in num.iter().enumerate() {
+        #[cfg(not(verus_keep_ghost))]
+        let mut chars = num.iter().enumerate();
+        #[cfg(verus_keep_ghost)]
+        let mut chars = crate::trusted::parsing::enumerate(num);
+        #[cfg(verus_keep_ghost)]
+        proof_decl! {
+            let ghost all_chars = crate::trusted::parsing::remaining(&chars);
+            let ghost mut processed = 0int;
+            let ghost mut integer = Seq::<u8>::empty();
+            let ghost mut fraction = Seq::<u8>::empty();
+        }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            vstd::slice::axiom_spec_len(num);
+            crate::proof::parsing::initial(num@);
+        }
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant 0 <= processed <= num@.len(), num@.len() <= i64::MAX,
+                num@.len() <= usize::MAX,
+                parse_settings.thousands_separator is None, parse_settings.decimal_pt == Some(b'.'),
+                crate::proof::keys::enumeration_matches(num@, all_chars),
+                crate::trusted::parsing::remaining(&chars) == all_chars.skip(processed),
+                crate::trusted::parsing::remaining(&chars).len() + processed == num@.len(),
+                crate::proof::parsing::state(num@, processed, first_char, matches!(sign, Sign::Negative),
+                    had_decimal_pt, had_digit, exponent as int, start, integer, fraction),
+                start is Some ==> processed > 0 &&
+                    (crate::proof::comparisons::is_digit(num@[processed - 1]) || num@[processed - 1] == b'.'),
+            ensures processed == num@.len(),
+            decreases num@.len() - processed,
+        ))]
+        while let Some((idx, char)) = chars.next() {
+            let char = *char;
+            #[cfg(verus_keep_ghost)]
+            proof_decl! { let ghost n = processed; }
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                assert(idx == n);
+                assert(char == num@[n]);
+                processed = n + 1;
+            }
             if first_char && is_blank(char) {
+                #[cfg(verus_keep_ghost)]
+                proof! { crate::proof::parsing::skip_blank(num@, n); }
                 continue;
             }
 
             if first_char && char == b'-' {
                 sign = Sign::Negative;
                 first_char = false;
+                #[cfg(verus_keep_ghost)]
+                proof! { crate::proof::parsing::skip_sign(num@, n); }
                 continue;
+            }
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::parsing::start_scanning(num@, n, first_char, matches!(sign, Sign::Negative),
+                    had_decimal_pt, had_digit, exponent as int, start, integer, fraction);
             }
             first_char = false;
 
@@ -82,20 +145,44 @@ impl NumInfo {
                 continue;
             }
 
+            #[cfg(verus_keep_ghost)]
+            proof_decl! { let ghost previous_dot = had_decimal_pt; }
             if Self::is_invalid_char(char, &mut had_decimal_pt, parse_settings) {
+                #[cfg(verus_keep_ghost)]
+                proof! { assert(crate::proof::parsing::scanned(num@) == (n, integer, fraction)); }
                 return if let Some(start) = start {
                     let unit = if parse_settings.fold_si_units {
                         char.to_ascii_uppercase()
                     } else {
                         char
                     };
+                    #[cfg(not(verus_keep_ghost))]
                     let has_si_unit =
                         parse_settings.accept_si_units && b"kKMGTPEZYRQ".contains(&unit);
+                    #[cfg(verus_keep_ghost)]
+                    let has_si_unit = parse_settings.accept_si_units
+                        && [b'k', b'K', b'M', b'G', b'T', b'P', b'E', b'Z', b'Y', b'R', b'Q'].contains(&unit);
+                    #[cfg(verus_keep_ghost)]
+                    proof! {
+                        crate::proof::parsing::unit_membership(unit);
+                        assert(has_si_unit == (parse_settings.accept_si_units
+                            && crate::proof::parsing::unit_at(num@, n, parse_settings.fold_si_units) > 0));
+                        crate::proof::parsing::finish_nonzero(num@, n, matches!(sign, Sign::Negative),
+                            previous_dot, had_digit, exponent as int, start, integer, fraction,
+                            parse_settings.accept_si_units, parse_settings.fold_si_units);
+                    }
                     (
                         Self { exponent, sign },
                         start..if has_si_unit { idx + 1 } else { idx },
                     )
                 } else {
+                    #[cfg(verus_keep_ghost)]
+                    proof! {
+                        crate::proof::parsing::finish_zero(num@, n, integer, fraction,
+                            parse_settings.accept_si_units, parse_settings.fold_si_units);
+                        crate::proof::parsing::empty_range(num@, n);
+                        crate::proof::parsing::empty_range(num@, 0);
+                    }
                     (
                         Self {
                             sign: Sign::Positive,
@@ -114,7 +201,17 @@ impl NumInfo {
                 };
             }
             if Some(char) == parse_settings.decimal_pt {
+                #[cfg(verus_keep_ghost)]
+                proof! { crate::proof::parsing::step_dot(num@, n, matches!(sign, Sign::Negative),
+                    had_digit, exponent as int, start, integer, fraction); }
                 continue;
+            }
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::parsing::step_digit(num@, n, matches!(sign, Sign::Negative), had_decimal_pt,
+                    had_digit, exponent as int, start, integer, fraction);
+                if had_decimal_pt { fraction = fraction.push(char); }
+                else { integer = integer.push(char); }
             }
             had_digit = true;
             if start.is_none() && char == b'0' {
@@ -133,9 +230,31 @@ impl NumInfo {
                 start = Some(idx);
             }
         }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            crate::proof::parsing::enumeration_end(num@, all_chars, processed);
+            assert(processed == num@.len());
+            if first_char {
+                crate::proof::parsing::head_bounds(num@, 0);
+                assert(crate::proof::parsing::scanned(num@) == (processed, integer, fraction));
+            } else {
+                assert(crate::proof::parsing::scanned(num@) == (processed, integer, fraction));
+            }
+        }
         if let Some(start) = start {
+            #[cfg(verus_keep_ghost)]
+            proof! { crate::proof::parsing::finish_nonzero(num@, processed, matches!(sign, Sign::Negative),
+                had_decimal_pt, had_digit, exponent as int, start, integer, fraction,
+                parse_settings.accept_si_units, parse_settings.fold_si_units); }
             (Self { exponent, sign }, start..num.len())
         } else {
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::parsing::finish_zero(num@, processed, integer, fraction,
+                    parse_settings.accept_si_units, parse_settings.fold_si_units);
+                crate::proof::parsing::empty_range(num@, processed);
+                crate::proof::parsing::empty_range(num@, 0);
+            }
             (
                 Self {
                     sign: Sign::Positive,
@@ -154,6 +273,12 @@ impl NumInfo {
         }
     }
 
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        ensures result == if Some(c) == parse_settings.decimal_pt { *old(had_decimal_pt) }
+                else { !crate::proof::comparisons::is_digit(c) },
+            *final(had_decimal_pt) == (*old(had_decimal_pt) || Some(c) == parse_settings.decimal_pt),
+    ))]
     fn is_invalid_char(
         c: u8,
         had_decimal_pt: &mut bool,
@@ -175,6 +300,11 @@ impl NumInfo {
 
 /// A lowercase unit other than `k` is only part of the range with `-f`, so it is
 /// read as the uppercase one.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    ensures result == crate::proof::comparisons::native_unit(unit),
+    no_unwind
+))]
 fn get_unit(unit: Option<u8>) -> u8 {
     match unit {
         Some(b'k' | b'K') => 1,
@@ -193,22 +323,39 @@ fn get_unit(unit: Option<u8>) -> u8 {
 
 /// Compare two numbers according to the rules of human numeric comparison.
 /// The SI-Unit takes precedence over the actual value (i.e. 2000M < 1G).
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    ensures result == crate::proof::comparisons::native_human_order(left.0@, left.1.exponent as int,
+        left.1.sign == Sign::Negative, right.0@, right.1.exponent as int, right.1.sign == Sign::Negative),
+    no_unwind
+))]
 pub fn human_numeric_str_cmp(
-    (a, a_info): (&[u8], &NumInfo),
-    (b, b_info): (&[u8], &NumInfo),
+    left: (&[u8], &NumInfo),
+    right: (&[u8], &NumInfo),
 ) -> Ordering {
+    let (a, a_info) = left;
+    let (b, b_info) = right;
     // 1. Sign
-    if a_info.sign != b_info.sign {
-        return a_info.sign.cmp(&b_info.sign);
+    if !matches!((&a_info.sign, &b_info.sign), (Sign::Negative, Sign::Negative) | (Sign::Positive, Sign::Positive)) {
+        return if matches!(a_info.sign, Sign::Negative) { Ordering::Less } else { Ordering::Greater };
     }
     // 2. Unit
+    #[cfg(not(verus_keep_ghost))]
     let a_unit = get_unit(a.iter().next_back().copied());
+    #[cfg(not(verus_keep_ghost))]
     let b_unit = get_unit(b.iter().next_back().copied());
+    #[cfg(verus_keep_ghost)]
+    let a_unit = get_unit(crate::trusted::comparisons::last_byte(a));
+    #[cfg(verus_keep_ghost)]
+    let b_unit = get_unit(crate::trusted::comparisons::last_byte(b));
+    #[cfg(not(verus_keep_ghost))]
     let ordering = a_unit.cmp(&b_unit);
-    if ordering == Ordering::Equal {
+    #[cfg(verus_keep_ghost)]
+    let ordering = crate::trusted::comparisons::cmp_u8(a_unit, b_unit);
+    if matches!(ordering, Ordering::Equal) {
         // 3. Number
         numeric_str_cmp((a, a_info), (b, b_info))
-    } else if a_info.sign == Sign::Negative {
+    } else if matches!(a_info.sign, Sign::Negative) {
         ordering.reverse()
     } else {
         ordering
@@ -218,49 +365,111 @@ pub fn human_numeric_str_cmp(
 /// Compare two numbers as strings without parsing them as a number first. This should be more performant and can handle numbers more precisely.
 /// [`NumInfo`] is needed to provide a fast path for most numbers.
 #[inline(always)]
-pub fn numeric_str_cmp((a, a_info): (&[u8], &NumInfo), (b, b_info): (&[u8], &NumInfo)) -> Ordering {
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    ensures result == crate::proof::comparisons::native_numeric_order(left.0@, left.1.exponent as int,
+        left.1.sign == Sign::Negative, right.0@, right.1.exponent as int, right.1.sign == Sign::Negative),
+    no_unwind
+))]
+pub fn numeric_str_cmp(left: (&[u8], &NumInfo), right: (&[u8], &NumInfo)) -> Ordering {
+    let (a, a_info) = left;
+    let (b, b_info) = right;
     // check for a difference in the sign
-    if a_info.sign != b_info.sign {
-        return a_info.sign.cmp(&b_info.sign);
+    if !matches!((&a_info.sign, &b_info.sign), (Sign::Negative, Sign::Negative) | (Sign::Positive, Sign::Positive)) {
+        return if matches!(a_info.sign, Sign::Negative) { Ordering::Less } else { Ordering::Greater };
     }
 
     // check for a difference in the exponent
-    let ordering = if a_info.exponent != b_info.exponent && !a.is_empty() && !b.is_empty() {
-        a_info.exponent.cmp(&b_info.exponent)
+    #[cfg(not(verus_keep_ghost))]
+    let (a_len, b_len) = (a.len(), b.len());
+    #[cfg(verus_keep_ghost)]
+    let (a_len, b_len) = (crate::trusted::comparisons::slice_len(a), crate::trusted::comparisons::slice_len(b));
+    let ordering = if a_info.exponent != b_info.exponent && a_len > 0 && b_len > 0 {
+        #[cfg(not(verus_keep_ghost))]
+        { a_info.exponent.cmp(&b_info.exponent) }
+        #[cfg(verus_keep_ghost)]
+        { crate::trusted::comparisons::cmp_i64(a_info.exponent, b_info.exponent) }
     } else {
         // walk the characters from the front until we find a difference
+        #[cfg(not(verus_keep_ghost))]
         let mut a_chars = a.iter().copied().filter(u8::is_ascii_digit);
+        #[cfg(not(verus_keep_ghost))]
         let mut b_chars = b.iter().copied().filter(u8::is_ascii_digit);
+        #[cfg(verus_keep_ghost)]
+        let mut a_chars = crate::trusted::comparisons::digit_bytes(a);
+        #[cfg(verus_keep_ghost)]
+        let mut b_chars = crate::trusted::comparisons::digit_bytes(b);
+        #[cfg(not(verus_keep_ghost))]
+        let is_zero = |c| c == b'0';
+        let mut result = Ordering::Equal;
+        #[cfg(verus_keep_ghost)]
+        proof_decl! {
+            let ghost left = a_chars.remaining();
+            let ghost right = b_chars.remaining();
+        }
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant_except_break crate::proof::comparisons::padded_order(left, right)
+                == crate::proof::comparisons::padded_order(a_chars.remaining(), b_chars.remaining()),
+            ensures result == crate::proof::comparisons::padded_order(left, right),
+            decreases a_chars.remaining().len() + b_chars.remaining().len(),
+        ))]
         loop {
+            #[cfg(verus_keep_ghost)]
+            proof_decl! {
+                let ghost a_before = a_chars.remaining();
+                let ghost b_before = b_chars.remaining();
+            }
             let a_next = a_chars.next();
             let b_next = b_chars.next();
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                if a_before.len() > 0 { crate::proof::comparisons::zero_sequence_step(a_before); }
+                if b_before.len() > 0 { crate::proof::comparisons::zero_sequence_step(b_before); }
+            }
             match (a_next, b_next) {
-                (None, None) => break Ordering::Equal,
+                (None, None) => { result = Ordering::Equal; break; },
                 (Some(c), None) => {
-                    break if c == b'0' && a_chars.all(|c| c == b'0') {
+                    #[cfg(not(verus_keep_ghost))]
+                    let remaining_zero = c == b'0' && a_chars.all(is_zero);
+                    #[cfg(verus_keep_ghost)]
+                    let remaining_zero = c == b'0' && a_chars.all_zero();
+                    result = if remaining_zero {
                         Ordering::Equal
                     } else {
                         Ordering::Greater
                     };
+                    break;
                 }
                 (None, Some(c)) => {
-                    break if c == b'0' && b_chars.all(|c| c == b'0') {
+                    #[cfg(not(verus_keep_ghost))]
+                    let remaining_zero = c == b'0' && b_chars.all(is_zero);
+                    #[cfg(verus_keep_ghost)]
+                    let remaining_zero = c == b'0' && b_chars.all_zero();
+                    result = if remaining_zero {
                         Ordering::Equal
                     } else {
                         Ordering::Less
                     };
+                    break;
                 }
                 (Some(a_char), Some(b_char)) => {
+                    #[cfg(verus_keep_ghost)]
+                    proof! { crate::proof::comparisons::padded_step(a_before, b_before); }
+                    #[cfg(not(verus_keep_ghost))]
                     let ord = a_char.cmp(&b_char);
-                    if ord != Ordering::Equal {
-                        break ord;
+                    #[cfg(verus_keep_ghost)]
+                    let ord = crate::trusted::comparisons::cmp_u8(a_char, b_char);
+                    if !matches!(ord, Ordering::Equal) {
+                        result = ord;
+                        break;
                     }
                 }
             }
         }
+        result
     };
 
-    if a_info.sign == Sign::Negative {
+    if matches!(a_info.sign, Sign::Negative) {
         ordering.reverse()
     } else {
         ordering

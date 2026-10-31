@@ -432,7 +432,7 @@ pub(crate) fn paste(
     Ok(())
 }
 
-#[cfg_attr(verus_keep_ghost, verus_verify(external_body))]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(world): Tracked<&World>,
     requires world.valid(), world.names() == filenames@,
@@ -443,19 +443,58 @@ pub(crate) fn paste(
                 paste_proof::source_session(#[trigger] result->Ok_0@[j]) == world.session(),
 ))]
 pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>> {
+    #[cfg(not(verus_keep_ghost))]
     let stdin_once_cell = OnceCell::<Rc<RefCell<Stdin>>>::new();
+    #[cfg(verus_keep_ghost)]
+    #[verus_spec(with => Tracked(mut cache))]
+    let stdin_once_cell = paste_trusted::library::new_cache::<Rc<RefCell<Stdin>>>();
     let mut input_source_vec = Vec::with_capacity(filenames.len());
 
-    for filename in filenames {
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant world.valid(), world.names() == filenames@, cache.owns(&stdin_once_cell),
+            cache.value() is Some ==> paste_trusted::library::session(
+                paste_trusted::library::cell_value(*cache.value()->Some_0)) == world.session(),
+            input_source_vec.len() == _index,
+            forall|j: int| 0 <= j < _index ==>
+                paste_proof::stdin_name(world.names()[j]) || paste_proof::file_openable(world.names()[j]),
+            forall|j: int| 0 <= j < _index ==>
+                paste_proof::source_id(#[trigger] input_source_vec@[j]) == paste_proof::ids(world.names())[j]
+                    && paste_proof::source_session(input_source_vec@[j]) == world.session(),
+    ))]
+    for _index in 0..filenames.len() {
+        let filename = &filenames[_index];
         let input_source = if paste_trusted::filename_is_stdin(&filename) {
-            InputSource::StandardInput(
-                stdin_once_cell
-                    .get_or_init(|| Rc::new(RefCell::new(stdin())))
-                    .clone(),
-            )
+            #[cfg(not(verus_keep_ghost))]
+            let shared = stdin_once_cell
+                .get_or_init(|| Rc::new(RefCell::new(stdin())))
+                .clone();
+            #[cfg(verus_keep_ghost)]
+            let shared = {
+                let init = crate::trusted_common::closure_with_spec!(
+                (result =>
+                    ensures paste_trusted::library::session(paste_trusted::library::cell_value(*result)) == world.session(),
+                ),
+                || -> Rc<RefCell<Stdin>> {
+                    #[verus_spec(with Tracked(world))]
+                    let handle = paste_trusted::library::stdin_handle();
+                    Rc::new(RefCell::new(handle))
+                });
+                #[verus_spec(with Tracked(&mut cache))]
+                let value = paste_trusted::library::cached(&stdin_once_cell, init);
+                paste_trusted::library::clone_rc(value)
+            };
+            InputSource::StandardInput(shared)
         } else {
+            #[cfg(not(verus_keep_ghost))]
             let file = paste_trusted::open_file(&filename)?;
-            InputSource::File(BufReader::new(file))
+            #[cfg(verus_keep_ghost)]
+            #[verus_spec(with Ghost(_index as int), Tracked(world))]
+            let file = paste_trusted::library::open_file(&filename)?;
+            #[cfg(not(verus_keep_ghost))]
+            let reader = BufReader::new(file);
+            #[cfg(verus_keep_ghost)]
+            let reader = paste_trusted::library::buffered(file);
+            InputSource::File(reader)
         };
         input_source_vec.push(input_source);
     }
@@ -538,20 +577,29 @@ fn write_single_input_source(
     Ok(())
 }
 
-#[cfg_attr(verus_keep_ghost, verus_verify(external_body))]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     ensures (result is Ok) == (paste_proof::parsed(*delimiters) is Some),
-        result is Ok ==> result->Ok_0@ == paste_proof::parsed(*delimiters)->Some_0,
+        result is Ok ==> paste_proof::delimiters(result->Ok_0@) == paste_proof::parsed(*delimiters)->Some_0,
 ))]
 pub(crate) fn parse_delimiters(delimiters: &OsString) -> UResult<Box<[Box<[u8]>]>> {
     #[cfg(not(verus_keep_ghost))]
     let bytes = uucore::os_str_as_bytes(delimiters)?;
     #[cfg(verus_keep_ghost)]
-    let bytes = uucore::os_str_as_bytes(delimiters).map_err(std::io::Error::other)?;
+    let bytes = paste_trusted::encoded_bytes(delimiters);
     let mut vec = Vec::<Box<[u8]>>::with_capacity(bytes.len());
     let mut i = 0;
 
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant i <= bytes.len(),
+            bytes@ == paste_proof::delimiter::os_bytes(*delimiters),
+            paste_proof::delimiter::parse(bytes@) == paste_proof::delimiter::append(
+                paste_proof::delimiters(vec@), paste_proof::delimiter::parse(bytes@.skip(i as int))),
+        decreases bytes.len() - i,
+    ))]
     while i < bytes.len() {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! { let ghost start = i as int; let ghost prefix = paste_proof::delimiters(vec@); }
         if bytes[i] == b'\\' {
             i += 1;
             if i >= bytes.len() {
@@ -561,38 +609,81 @@ pub(crate) fn parse_delimiters(delimiters: &OsString) -> UResult<Box<[Box<[u8]>]
                     translate!("paste-error-delimiter-unescaped-backslash", "delimiters" => delimiters.to_string_lossy()),
                 ));
                 #[cfg(verus_keep_ghost)]
-                return Err(std::io::Error::other(
-                    "delimiter list ends with an unescaped backslash",
-                ));
+                proof! {
+                    assert(bytes@.skip(start).len() == 1);
+                    paste_proof::delimiter::trailing(bytes@.skip(start));
+                    assert(paste_proof::parsed(*delimiters) is None);
+                }
+                #[cfg(verus_keep_ghost)]
+                return Err(paste_trusted::delimiter_error());
             }
             match bytes[i] {
-                b'0' => vec.push(Box::new([])),
-                b'\\' => vec.push(Box::new(*b"\\")),
-                b'n' => vec.push(Box::new(*b"\n")),
-                b't' => vec.push(Box::new(*b"\t")),
-                b'b' => vec.push(Box::new(*b"\x08")),
-                b'f' => vec.push(Box::new(*b"\x0C")),
-                b'r' => vec.push(Box::new(*b"\r")),
-                b'v' => vec.push(Box::new(*b"\x0B")),
+                b'0' => vec.push(paste_trusted::box_bytes(b"")),
+                b'\\' => vec.push(paste_trusted::box_byte(b'\\')),
+                b'n' => vec.push(paste_trusted::box_byte(b'\n')),
+                b't' => vec.push(paste_trusted::box_byte(b'\t')),
+                b'b' => vec.push(paste_trusted::box_byte(8)),
+                b'f' => vec.push(paste_trusted::box_byte(12)),
+                b'r' => vec.push(paste_trusted::box_byte(b'\r')),
+                b'v' => vec.push(paste_trusted::box_byte(11)),
                 _ => {
                     // Unknown escape: strip backslash, use the following character(s)
                     let remaining = &bytes[i..];
+                    #[cfg(not(verus_keep_ghost))]
                     let len = mb_char_len(remaining);
-                    vec.push(Box::from(&bytes[i..i + len]));
+                    #[cfg(verus_keep_ghost)]
+                    let len = paste_trusted::character_length(remaining);
+                    vec.push(paste_trusted::box_bytes(&bytes[i..i + len]));
                     i += len;
+                    #[cfg(verus_keep_ghost)]
+                    proof! {
+                        assert(paste_proof::delimiters(vec@).drop_last() =~= prefix);
+                        paste_proof::delimiter::step(bytes@, start, i as int, paste_proof::delimiters(vec@).last());
+                        paste_proof::delimiter::advance(bytes@, start, i as int, prefix, paste_proof::delimiters(vec@));
+                    }
                     continue;
                 }
+            }
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                assert(paste_proof::delimiter::escaped(bytes@[start + 1]));
+                match bytes@[start + 1] {
+                    b'0' => { assert(paste_proof::delimiters(vec@).last() =~= Seq::<u8>::empty()); },
+                    b'\\' => { assert(paste_proof::delimiters(vec@).last() =~= seq![b'\\']); },
+                    b'n' => { assert(paste_proof::delimiters(vec@).last() =~= seq![b'\n']); },
+                    b't' => { assert(paste_proof::delimiters(vec@).last() =~= seq![b'\t']); },
+                    b'b' => { assert(paste_proof::delimiters(vec@).last() =~= seq![8u8]); },
+                    b'f' => { assert(paste_proof::delimiters(vec@).last() =~= seq![12u8]); },
+                    b'r' => { assert(paste_proof::delimiters(vec@).last() =~= seq![b'\r']); },
+                    _ => { assert(paste_proof::delimiters(vec@).last() =~= seq![11u8]); },
+                }
+                assert(paste_proof::delimiters(vec@).last() == paste_proof::delimiter::escape(bytes@[start + 1]));
             }
             i += 1;
         } else {
             let remaining = &bytes[i..];
+            #[cfg(not(verus_keep_ghost))]
             let len = mb_char_len(remaining);
-            vec.push(Box::from(&bytes[i..i + len]));
+            #[cfg(verus_keep_ghost)]
+            let len = paste_trusted::character_length(remaining);
+            vec.push(paste_trusted::box_bytes(&bytes[i..i + len]));
             i += len;
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                assert(paste_proof::delimiters(vec@).last() == bytes@.subrange(start, i as int));
+            }
+        }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            assert(paste_proof::delimiters(vec@).drop_last() =~= prefix);
+            paste_proof::delimiter::step(bytes@, start, i as int, paste_proof::delimiters(vec@).last());
+            paste_proof::delimiter::advance(bytes@, start, i as int, prefix, paste_proof::delimiters(vec@));
         }
     }
 
-    Ok(vec.into_boxed_slice())
+    #[cfg(verus_keep_ghost)]
+    proof! { paste_proof::delimiter::empty(bytes@.skip(i as int)); }
+    Ok(paste_trusted::boxed_slice(vec))
 }
 
 #[cfg_attr(verus_keep_ghost, verus_verify)]
@@ -820,14 +911,14 @@ impl<'a> DelimiterState<'a> {
 }
 
 #[cfg_attr(verus_keep_ghost, verus_verify)]
-pub(crate) enum InputSource {
+pub enum InputSource {
     File(BufReader<File>),
     StandardInput(Rc<RefCell<Stdin>>),
 }
 
 #[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl InputSource {
-    #[cfg_attr(verus_keep_ghost, verifier::external_body)]
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(world): Tracked<&mut World>,
         requires old(world).valid(), old(buf).len() > 0,
@@ -848,6 +939,7 @@ impl InputSource {
                 paste_proof::drop_bytes(old(world).records()[paste_proof::source_id(*old(self))], result->Ok_0 as int)),
     ))]
     fn read(&mut self, buf: &mut [u8]) -> UResult<usize> {
+        #[cfg(not(verus_keep_ghost))]
         let us = match self {
             Self::File(bu) => bu.read(buf)?,
             Self::StandardInput(rc) => rc
@@ -866,10 +958,24 @@ impl InputSource {
                 .read(buf)?,
         };
 
+        #[cfg(verus_keep_ghost)]
+        let us = match self {
+            Self::File(reader) =>
+            {
+                #[verus_spec(with Tracked(&mut *world))]
+                paste_trusted::library::read(reader, buf)?
+            }
+            Self::StandardInput(rc) => {
+                let mut reader = paste_trusted::library::lock_stdin(rc);
+                #[verus_spec(with Tracked(&mut *world))]
+                paste_trusted::library::read(&mut reader, buf)?
+            }
+        };
+
         Ok(us)
     }
 
-    #[cfg_attr(verus_keep_ghost, verifier::external_body)]
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(world): Tracked<&mut World>,
         requires old(world).valid(), byte == old(world).ending(),
@@ -891,6 +997,7 @@ impl InputSource {
             },
     ))]
     pub(crate) fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> UResult<usize> {
+        #[cfg(not(verus_keep_ghost))]
         let us = match self {
             Self::File(bu) => bu.read_until(byte, buf)?,
             Self::StandardInput(rc) => rc
@@ -907,6 +1014,20 @@ impl InputSource {
                 })?
                 .lock()
                 .read_until(byte, buf)?,
+        };
+
+        #[cfg(verus_keep_ghost)]
+        let us = match self {
+            Self::File(reader) =>
+            {
+                #[verus_spec(with Tracked(&mut *world))]
+                paste_trusted::library::read_until(reader, byte, buf)?
+            }
+            Self::StandardInput(rc) => {
+                let mut reader = paste_trusted::library::lock_stdin(rc);
+                #[verus_spec(with Tracked(&mut *world))]
+                paste_trusted::library::read_until(&mut reader, byte, buf)?
+            }
         };
 
         Ok(us)

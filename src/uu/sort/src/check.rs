@@ -19,7 +19,7 @@ use std::{
     sync::mpsc::{Receiver, SyncSender, sync_channel},
     thread,
 };
-use uucore::error::UResult;
+use crate::SortResult as UResult;
 
 /// Check if the file at `path` is ordered.
 ///
@@ -119,7 +119,7 @@ pub fn check(path: &OsStr, settings: &GlobalSettings) -> UResult<()> {
 
 /// The function running on the reader thread.
 fn reader(
-    mut file: Box<dyn Read + Send>,
+    mut file: crate::InputReader,
     receiver: &Receiver<RecycledChunk>,
     sender: &SyncSender<Chunk>,
     settings: &GlobalSettings,

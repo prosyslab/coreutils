@@ -47,24 +47,43 @@ use trusted::{chunks, count_kept};
 pub(crate) use crate::trusted_common::{closure_with_spec, extend_mapped};
 #[cfg(not(verus_keep_ghost))]
 pub(crate) use trusted_common::{closure_with_spec, extend_mapped};
+#[cfg(verus_keep_ghost)]
+use crate::trusted_common as library_trusted;
+#[cfg(not(verus_keep_ghost))]
+use self::trusted_common as library_trusted;
 
 /// Helper to detect single-character operations for optimization
 #[cfg(any(not(verus_keep_ghost), uutils_tr_translate))]
-#[cfg_attr(verus_keep_ghost, verifier::external_body)]
-#[cfg_attr(verus_keep_ghost, verus_spec)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    with Ghost(predicate): Ghost<crate::trusted_common::IndexedPredicate<T>>,
+    requires
+        forall|i: int| 0 <= i < 256 ==> check.requires((i as usize, &table@[i])),
+        forall|i: int, value: bool| 0 <= i < 256
+            && #[trigger] check.ensures((i as usize, &table@[i]), value)
+            ==> value == predicate(i as usize, table@[i]),
+    ensures match result {
+        Some((source, target)) => target == table@[source as int]
+            && predicate(source as usize, target)
+            && forall|i: int| 0 <= i < 256 && i != source as int ==>
+                !predicate(i as usize, table@[i]),
+        None => crate::trusted_common::selected_indices(table@, predicate).len() != 1,
+    },
+))]
 pub fn find_single_change<T, F>(table: &[T; 256], check: F) -> Option<(u8, T)>
 where
     F: Fn(usize, &T) -> bool,
     T: Copy,
 {
-    let matches: Vec<_> = table
-        .iter()
-        .enumerate()
-        .filter_map(|(i, val)| check(i, val).then_some((i as u8, *val)))
-        .take(2)
-        .collect();
-
-    (matches.len() == 1).then(|| matches[0])
+    #[cfg_attr(verus_keep_ghost, verus_spec(with Ghost(predicate)))]
+    let matches = library_trusted::enumerated_filter_take(table, check, 2);
+    if matches.len() == 1 {
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::tr_proof::unique_selected(table@, predicate); }
+        Some((matches[0].0 as u8, matches[0].1))
+    } else {
+        None
+    }
 }
 
 /// SIMD-optimized single character replacement

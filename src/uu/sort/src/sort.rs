@@ -66,6 +66,28 @@ use uucore::{format_usage, i18n};
 
 use crate::buffer_hint::automatic_buffer_size;
 use crate::tmp_dir::TmpDirWrapper;
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
+use crate::proof::unwind::Comparator as UnwindComparator;
+#[cfg(verus_keep_ghost)]
+use crate::proof::comparisons::native as comparison_proof;
+
+#[cfg(not(verus_keep_ghost))]
+type InputReader = Box<dyn Read + Send>;
+#[cfg(verus_keep_ghost)]
+type InputReader = crate::trusted::Reader;
+#[cfg(not(verus_keep_ghost))]
+type SortResult<T> = UResult<T>;
+#[cfg(verus_keep_ghost)]
+type SortResult<T> = Result<T, crate::trusted::IoFailure>;
+
+fn boxed_reader<R: Read + Send + 'static>(reader: R) -> InputReader {
+    #[cfg(not(verus_keep_ghost))]
+    { Box::new(reader) }
+    #[cfg(verus_keep_ghost)]
+    { crate::trusted::Reader::new(reader) }
+}
 
 mod options {
     pub mod modes {
@@ -113,10 +135,20 @@ mod options {
     pub const FILES: &str = "files";
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const DECIMAL_PT: u8 = b'.';
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::comparisons::c_locale(),
+    ensures result == b'.',
+))]
 fn locale_decimal_pt() -> u8 {
-    match locale_decimal_separator().as_bytes().first().copied() {
+    #[cfg(not(verus_keep_ghost))]
+    let bytes = locale_decimal_separator().as_bytes();
+    #[cfg(verus_keep_ghost)]
+    let bytes = crate::trusted::sorting::locale_decimal_bytes();
+    match bytes.first().copied() {
         Some(b'.') => b'.',
         Some(b',') => b',',
         _ => DECIMAL_PT,
@@ -130,6 +162,7 @@ const POSITIVE: &u8 = &b'+';
 // over-committing memory on constrained systems while still keeping
 // reasonably large chunks for typical workloads.
 const MIN_AUTOMATIC_BUF_SIZE: usize = 512 * 1024; // 512 KiB
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const FALLBACK_AUTOMATIC_BUF_SIZE: usize = 32 * 1024 * 1024; // 32 MiB
 const MAX_AUTOMATIC_BUF_SIZE: usize = 1024 * 1024 * 1024; // 1 GiB
 
@@ -225,6 +258,7 @@ fn format_disorder(file: &OsString, line_number: &usize, line: &String, silent: 
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Copy, Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 enum SortMode {
     Numeric,
     HumanNumeric,
@@ -240,6 +274,7 @@ fn count_non_null_bytes(bytes: &[u8]) -> usize {
     bytes.iter().filter(|&&c| c != b'\0').count()
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct Output {
     file: Option<(OsString, File)>,
 }
@@ -300,7 +335,10 @@ impl Output {
 }
 
 #[derive(Clone)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct GlobalSettings {
+    #[cfg(verus_keep_ghost)]
+    specification: Ghost<Option<crate::order::SortOptions>>,
     mode: SortMode,
     debug: bool,
     ignore_leading_blanks: bool,
@@ -327,6 +365,7 @@ pub struct GlobalSettings {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct NumericLocaleSettings {
     thousands_sep: Option<u8>,
     decimal_pt: Option<u8>,
@@ -342,6 +381,12 @@ impl Default for NumericLocaleSettings {
 }
 
 impl NumericLocaleSettings {
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        ensures result.accept_si_units == accept_si_units, result.fold_si_units == fold_si_units,
+            result.thousands_separator == self.thousands_sep, result.decimal_pt == self.decimal_pt,
+    ))]
     fn num_info_settings(self, accept_si_units: bool, fold_si_units: bool) -> NumInfoParseSettings {
         NumInfoParseSettings {
             accept_si_units,
@@ -355,6 +400,7 @@ impl NumericLocaleSettings {
 /// Data needed for sorting. Should be computed once before starting to sort
 /// by calling `GlobalSettings::init_precomputed`.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct Precomputed {
     needs_tokens: bool,
     num_infos_per_line: usize,
@@ -395,7 +441,14 @@ impl GlobalSettings {
     ///
     /// When i18n-collator is enabled, `disable_fast_lexicographic` should be set to true if we're
     /// in a UTF-8 locale (to force locale-aware collation instead of byte comparison).
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        ensures crate::proof::configuration::unchanged(old(self), final(self)),
+            final(self).precomputed == crate::proof::configuration::precomputed(old(self), disable_fast_lexicographic),
+    ))]
     fn init_precomputed(&mut self, disable_fast_lexicographic: bool) {
+        #[cfg(not(verus_keep_ghost))]
+        {
         self.precomputed.needs_tokens = self.selectors.iter().any(|s| s.needs_tokens);
         self.precomputed.selections_per_line =
             self.selectors.iter().filter(|s| s.needs_selection).count();
@@ -423,6 +476,50 @@ impl GlobalSettings {
             && self.numeric_locale.thousands_sep == Some(b' ');
         self.precomputed.tokenize_allow_unit_after_blank =
             self.precomputed.tokenize_blank_thousands_sep && uses_human_numeric;
+        }
+        #[cfg(verus_keep_ghost)]
+        {
+            self.precomputed.needs_tokens = verus_exec_expr! {
+                crate::trusted::configuration::any(&self.selectors,
+                    |s: &FieldSelector| -> (result: bool) ensures result == s.needs_tokens,
+                    { s.needs_tokens }, Ghost(|s: FieldSelector| s.needs_tokens))
+            };
+            self.precomputed.selections_per_line = verus_exec_expr! {
+                crate::trusted::configuration::count(&self.selectors,
+                    |s: &FieldSelector| -> (result: bool) ensures result == s.needs_selection,
+                    { s.needs_selection }, Ghost(|s: FieldSelector| s.needs_selection))
+            };
+            self.precomputed.num_infos_per_line = verus_exec_expr! {
+                crate::trusted::configuration::count(&self.selectors,
+                    |s: &FieldSelector| -> (result: bool)
+                        ensures result == matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric),
+                    { matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric) },
+                    Ghost(|s: FieldSelector| matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric)))
+            };
+            self.precomputed.floats_per_line = verus_exec_expr! {
+                crate::trusted::configuration::count(&self.selectors,
+                    |s: &FieldSelector| -> (result: bool) ensures result == (s.settings.mode == SortMode::GeneralNumeric),
+                    { matches!(s.settings.mode, SortMode::GeneralNumeric) },
+                    Ghost(|s: FieldSelector| s.settings.mode == SortMode::GeneralNumeric))
+            };
+            let uses_numeric = verus_exec_expr! {
+                crate::trusted::configuration::any(&self.selectors,
+                    |s: &FieldSelector| -> (result: bool)
+                        ensures result == matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric),
+                    { matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric) },
+                    Ghost(|s: FieldSelector| matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric)))
+            };
+            let uses_human_numeric = verus_exec_expr! {
+                crate::trusted::configuration::any(&self.selectors,
+                    |s: &FieldSelector| -> (result: bool) ensures result == (s.settings.mode == SortMode::HumanNumeric),
+                    { matches!(s.settings.mode, SortMode::HumanNumeric) },
+                    Ghost(|s: FieldSelector| s.settings.mode == SortMode::HumanNumeric))
+            };
+            self.precomputed.tokenize_blank_thousands_sep = self.separator.is_none()
+                && uses_numeric && self.numeric_locale.thousands_sep == Some(b' ');
+            self.precomputed.tokenize_allow_unit_after_blank =
+                self.precomputed.tokenize_blank_thousands_sep && uses_human_numeric;
+        }
 
         self.precomputed.fast_lexicographic =
             !disable_fast_lexicographic && self.can_use_fast_lexicographic();
@@ -442,12 +539,15 @@ impl GlobalSettings {
     /// which the line as a whole stands for. A key whose `r` differs from the
     /// global one also has to go the long way, since the shortcut only knows
     /// the global one.
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        ensures result == crate::proof::configuration::whole_line_numeric(self),
+    ))]
     fn can_use_whole_line_numeric(&self) -> bool {
-        let [selector] = &self.selectors[..] else {
-            return false;
-        };
-        self.mode == SortMode::Numeric
-            && selector.settings.mode == SortMode::Numeric
+        if self.selectors.len() != 1 { return false; }
+        let selector = &self.selectors[0];
+        matches!(self.mode, SortMode::Numeric)
+            && matches!(selector.settings.mode, SortMode::Numeric)
             && selector.settings.reverse == self.reverse
             && selector.from.field == 1
             && selector.from.char == 1
@@ -458,11 +558,14 @@ impl GlobalSettings {
     /// Note: When i18n-collator is enabled, the caller must have already determined
     /// whether locale-aware collation is needed (via checking if we're in a UTF-8 locale).
     /// This check is performed in [`uumain()`] before `init_precomputed()` is called.
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        ensures result == crate::proof::configuration::fast_text(self, false),
+    ))]
     fn can_use_fast_lexicographic(&self) -> bool {
-        let [selector] = &self.selectors[..] else {
-            return false;
-        };
-        self.mode == SortMode::Default
+        if self.selectors.len() != 1 { return false; }
+        let selector = &self.selectors[0];
+        matches!(self.mode, SortMode::Default)
             && !self.ignore_case
             && !self.dictionary_order
             && !self.ignore_non_printing
@@ -477,11 +580,14 @@ impl GlobalSettings {
     }
 
     /// Returns true when the ASCII case-insensitive fast path is valid.
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        ensures result == crate::proof::configuration::fast_text(self, true),
+    ))]
     fn can_use_fast_ascii_insensitive(&self) -> bool {
-        let [selector] = &self.selectors[..] else {
-            return false;
-        };
-        self.mode == SortMode::Default
+        if self.selectors.len() != 1 { return false; }
+        let selector = &self.selectors[0];
+        matches!(self.mode, SortMode::Default)
             && self.ignore_case
             && !self.dictionary_order
             && !self.ignore_non_printing
@@ -499,6 +605,8 @@ impl GlobalSettings {
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
+            #[cfg(verus_keep_ghost)]
+            specification: verus_exec_expr! { Ghost(None) },
             mode: SortMode::Default,
             debug: false,
             ignore_leading_blanks: false,
@@ -527,6 +635,7 @@ impl Default for GlobalSettings {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct KeySettings {
     mode: SortMode,
     ignore_blanks: bool,
@@ -672,6 +781,7 @@ fn incompatible_options_message(opts: &str) -> String {
 fn incompatible_options_error(opts: &str) -> Box<dyn UError> {
     USimpleError::new(2, incompatible_options_message(opts))
 }
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 enum Selection<'a> {
     AsBigDecimal(GeneralBigDecimalParseResult),
     WithNumInfo(&'a [u8], NumInfo),
@@ -681,6 +791,7 @@ enum Selection<'a> {
 type Field = Range<usize>;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct Line<'a> {
     line: &'a [u8],
     index: usize,
@@ -691,13 +802,33 @@ impl<'a> Line<'a> {
     ///
     /// If additional data is needed for sorting it is added to `line_data`.
     /// `token_buffer` allows to reuse the allocation for tokens.
-    fn create(
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires crate::proof::native_settings_valid(settings),
+            crate::proof::sorting::cache_shape(old(line_data), settings, index as int),
+        ensures result.line@ == line@, result.index == index,
+            crate::proof::cached_line(&result, settings, final(line_data)),
+            crate::proof::sorting::cache_shape(final(line_data), settings, index as int + 1),
+            crate::proof::sorting::cache_extends(old(line_data), final(line_data)),
+    ))]
+    fn create<'s>(
         line: &'a [u8],
         index: usize,
         line_data: &mut LineData<'a>,
         token_buffer: &mut Vec<Field>,
-        settings: &GlobalSettings,
+        settings: &'s GlobalSettings,
     ) -> Self {
+        #[cfg(verus_keep_ghost)]
+        let line = crate::trusted::bounded_bytes(line);
+        #[cfg(verus_keep_ghost)]
+        proof_decl! { let ghost initial_data = *line_data; }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            crate::proof::native_settings_facts(settings);
+            crate::proof::sorting::selectors_ready(settings);
+            crate::proof::sorting::cache_counts(settings);
+        }
         #[cfg(feature = "i18n-collator")]
         if settings.precomputed.fast_locale_collation {
             compute_sort_key_utf8(line, &mut line_data.collation_key_buffer);
@@ -713,6 +844,11 @@ impl<'a> Line<'a> {
             || settings.precomputed.floats_per_line > 0
             || settings.precomputed.whole_line_numeric;
         if !needs_line_data {
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::sorting::empty_cache(&Self { line, index }, settings, line_data);
+                crate::proof::sorting::cache_extends_reflexive(line_data);
+            }
             return Self { line, index };
         }
         token_buffer.clear();
@@ -724,21 +860,54 @@ impl<'a> Line<'a> {
                 &settings.precomputed,
             );
         }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            if settings.precomputed.needs_tokens {
+                crate::proof::keys::fields_bounds(line@, settings.separator);
+            }
+        }
         if settings.precomputed.whole_line_numeric {
             // exclude inf, nan, scientific notation; GNU -n does not treat '+' as a sign
+            #[cfg(not(verus_keep_ghost))]
             let line_num_float = (!line.iter().any(u8::is_ascii_alphabetic))
                 .then(|| std::str::from_utf8(line).ok())
                 .flatten()
                 .filter(|s| !s.trim_ascii_start().starts_with('+'))
                 .and_then(|s| s.parse::<f64>().ok());
+            #[cfg(verus_keep_ghost)]
+            let line_num_float = if crate::trusted::sorting::any_ascii_alpha(line) { None }
+                else { match crate::trusted::sorting::utf8(line) {
+                    Err(_) => None,
+                    Ok(text) => if crate::trusted::sorting::trimmed_plus(text) { None }
+                        else { crate::trusted::sorting::float_from_str(text) },
+                } };
+            #[cfg(verus_keep_ghost)]
+            proof! { assert(line_num_float == crate::proof::native_float_hint(line@)); }
             line_data.line_num_floats.push(line_num_float);
         }
-        for (selector, selection) in settings.selectors.iter().map(|selector| {
-            (
-                selector,
-                selector.get_selection(line, token_buffer, settings.numeric_locale),
-            )
-        }) {
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof::sorting::begin_cache(line@, index, settings, &initial_data, line_data); }
+        #[cfg_attr(verus_keep_ghost, verus_spec(state =>
+            invariant crate::proof::native_settings_valid(settings),
+                line@.len() <= isize::MAX, state.seq().unref() == settings.selectors@,
+                settings.precomputed.needs_tokens ==> crate::proof::keys::field_values(token_buffer@)
+                    == crate::proof::keys::fields_model(line@, settings.separator),
+                forall|j: int| 0 <= j < settings.selectors.len() ==>
+                    crate::proof::sorting::selector_ready(&settings.selectors@[j]),
+                crate::proof::sorting::cache_prefix(line@, index, settings, line_data, state.index()),
+                crate::proof::sorting::cache_extends(&initial_data, line_data),
+        ))]
+        for selector in &settings.selectors {
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::native_settings_facts(settings);
+                crate::proof::sorting::cache_counts(settings);
+                if selector.needs_tokens { crate::proof::keys::fields_bounds(line@, settings.separator); }
+                crate::proof::sorting::selection_fields(line@, selector, token_buffer@, settings.separator);
+            }
+            let selection = selector.get_selection(line, token_buffer, settings.numeric_locale);
+            #[cfg(verus_keep_ghost)]
+            proof_decl! { let ghost before = *line_data; let ghost selected = selection; }
             match selection {
                 Selection::AsBigDecimal(parsed_float) => line_data.parsed_floats.push(parsed_float),
                 Selection::WithNumInfo(str, num_info) => {
@@ -751,16 +920,50 @@ impl<'a> Line<'a> {
                     }
                 }
             }
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                crate::proof::sorting::cache_step(line@, index, settings,
+                    &before, line_data, state.index(), &selected);
+                crate::proof::sorting::cache_extends_transitive(&initial_data, &before, line_data);
+            }
         }
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof::sorting::finish_cache(&Self { line, index }, settings, line_data); }
         Self { line, index }
     }
 
+    #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
+        requires !settings.debug,
+            crate::trusted::writer_session(old(writer)) == old(log).session(),
+        ensures result is Ok, final(log).session() == old(log).session(),
+            crate::trusted::writer_session(final(writer)) == final(log).session(),
+            final(log).bytes() == old(log).bytes() + self.line@
+                + seq![crate::trusted::ending_byte(settings.line_ending)],
+            !final(log).flushed(),
+    ))]
     fn write(&self, writer: &mut impl Write, settings: &GlobalSettings) -> std::io::Result<()> {
         if settings.debug {
+            #[cfg(not(verus_keep_ghost))]
             self.write_debug(settings, writer)?;
+            #[cfg(verus_keep_ghost)]
+            proof! { assert(false); }
         } else {
+            #[cfg(not(verus_keep_ghost))]
             writer.write_all(self.line)?;
+            #[cfg(verus_keep_ghost)]
+            {
+                proof_with! { Tracked(&mut *log) }
+                crate::trusted::write_output(writer, self.line)?;
+            }
+            #[cfg(not(verus_keep_ghost))]
             writer.write_all(&[settings.line_ending.into()])?;
+            #[cfg(verus_keep_ghost)]
+            {
+                proof_with! { Tracked(&mut *log) }
+                crate::trusted::write_output(writer, &[settings.line_ending.into()])?;
+            }
         }
         Ok(())
     }
@@ -913,13 +1116,21 @@ impl<'a> Line<'a> {
 }
 
 /// Tokenize a line into fields. The result is stored into `token_buffer`.
+#[cfg_attr(verus_keep_ghost, verus_spec(
+    requires old(token_buffer).len() == 0, !precomputed.tokenize_blank_thousands_sep,
+    ensures crate::proof::keys::field_values(final(token_buffer)@)
+        == crate::proof::keys::fields_model(line@, separator),
+))]
 fn tokenize(
     line: &[u8],
     separator: Option<u8>,
     token_buffer: &mut Vec<Field>,
     precomputed: &Precomputed,
 ) {
+    #[cfg(not(verus_keep_ghost))]
     assert!(token_buffer.is_empty());
+    #[cfg(verus_keep_ghost)]
+    proof! { assert(token_buffer.len() == 0); }
     if let Some(separator) = separator {
         tokenize_with_separator(line, separator, token_buffer);
     } else {
@@ -935,24 +1146,65 @@ fn tokenize(
 /// By default fields are separated by the first whitespace after non-whitespace.
 /// Whitespace is included in fields at the start.
 /// The result is stored into `token_buffer`.
+#[cfg_attr(verus_keep_ghost, verus_spec(
+    requires old(token_buffer).len() == 0, !blank_thousands_sep,
+    ensures crate::proof::keys::field_values(final(token_buffer)@)
+        == crate::proof::keys::fields_model(line@, None),
+))]
 fn tokenize_default(
     line: &[u8],
     token_buffer: &mut Vec<Field>,
     blank_thousands_sep: bool,
     allow_unit_after_blank: bool,
 ) {
+    #[cfg(verus_keep_ghost)]
+    proof! { crate::proof::keys::append_field(token_buffer@, 0, 0); }
     token_buffer.push(0..0);
     // pretend that there was whitespace in front of the line
     let mut previous_was_whitespace = true;
-    for (idx, char) in line.iter().enumerate() {
+    #[cfg(not(verus_keep_ghost))]
+    let byte_iter = line.iter().enumerate();
+    #[cfg(verus_keep_ghost)]
+    let byte_iter = crate::trusted::keys::enumerate_bytes(line);
+    #[cfg(verus_keep_ghost)]
+    proof_decl! { let ghost all_bytes = byte_iter@; }
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        vstd::slice::axiom_spec_len(line);
+    }
+    #[cfg_attr(verus_keep_ghost, verus_spec(byte_state =>
+        invariant byte_state.seq() == all_bytes,
+            line@.len() <= usize::MAX,
+            crate::proof::keys::enumeration_matches(line@, all_bytes),
+            token_buffer.len() > 0,
+            crate::proof::keys::field_values(token_buffer@)
+                == crate::proof::keys::pending_fields(line@, byte_state.index()),
+            previous_was_whitespace == (byte_state.index() == 0
+                || crate::proof::ascii_blank(line@[byte_state.index() - 1])),
+    ))]
+    for (idx, char) in byte_iter {
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            crate::proof::keys::advance_pending(line@, byte_state.index(), token_buffer@);
+            assert(idx == byte_state.index());
+            assert(*char == line@[idx as int]);
+        }
+        #[cfg(not(verus_keep_ghost))]
         let is_separator = is_blank(*char)
             && !(blank_thousands_sep
                 && *char == b' '
                 && is_blank_thousands_sep(line, idx, allow_unit_after_blank));
+        #[cfg(verus_keep_ghost)]
+        let is_separator = is_blank(*char);
 
         if is_separator {
             if !previous_was_whitespace {
-                token_buffer.last_mut().unwrap().end = idx;
+                #[cfg(verus_keep_ghost)]
+                proof! { crate::proof::keys::set_field_end(token_buffer@, idx); }
+                let last = token_buffer.last_mut().unwrap();
+                last.end = idx;
+                #[cfg(verus_keep_ghost)]
+                proof! { crate::proof::keys::append_field(token_buffer@, idx, 0); }
                 token_buffer.push(idx..0);
             }
             previous_was_whitespace = true;
@@ -960,7 +1212,10 @@ fn tokenize_default(
             previous_was_whitespace = false;
         }
     }
-    token_buffer.last_mut().unwrap().end = line.len();
+    #[cfg(verus_keep_ghost)]
+    proof! { crate::proof::keys::finish_pending(line@, token_buffer@); }
+    let last = token_buffer.last_mut().unwrap();
+    last.end = line.len();
 }
 
 fn is_blank_thousands_sep(line: &[u8], idx: usize, allow_unit_after_blank: bool) -> bool {
@@ -984,22 +1239,61 @@ fn is_blank_thousands_sep(line: &[u8], idx: usize, allow_unit_after_blank: bool)
 
 /// Split between separators. These separators are not included in fields.
 /// The result is stored into `token_buffer`.
+#[cfg_attr(verus_keep_ghost, verus_spec(
+    requires old(token_buffer).len() == 0,
+    ensures crate::proof::keys::field_values(final(token_buffer)@)
+        == crate::proof::keys::fields_model(line@, Some(separator)),
+))]
 fn tokenize_with_separator(line: &[u8], separator: u8, token_buffer: &mut Vec<Field>) {
+    #[cfg(not(verus_keep_ghost))]
     let separator_indices = line
         .iter()
         .enumerate()
         .filter_map(|(i, &c)| if c == separator { Some(i) } else { None });
+    #[cfg(verus_keep_ghost)]
+    let separator_indices = verus_exec_expr! {
+        crate::trusted::keys::filter_indices(line,
+            |byte: u8| -> (result: bool) ensures result == (byte == separator), { byte == separator },
+            Ghost(|byte: u8| byte == separator))
+    };
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        crate::proof::keys::same_filter(Seq::new(line@.len(), |i: int| i as usize),
+            |i: usize| (|byte: u8| byte == separator)(line@[i as int]),
+            |i: usize| crate::proof::keys::boundary(line@, Some(separator), i as int));
+        assert(separator_indices@ == crate::proof::keys::cuts(line@, Some(separator), line.len() as int));
+    }
     let mut start = 0;
+    #[cfg_attr(verus_keep_ghost, verus_spec(separator_state =>
+        invariant separator_state.seq()
+                == crate::proof::keys::cuts(line@, Some(separator), line.len() as int),
+            crate::proof::keys::field_values(token_buffer@)
+                == crate::proof::keys::pairs(separator_state.seq().take(separator_state.index()), Some(separator)),
+            start == crate::proof::keys::start_after(
+                separator_state.seq().take(separator_state.index()), Some(separator)),
+    ))]
     for sep_idx in separator_indices {
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            crate::proof::keys::cuts_bounds(line@, Some(separator), line.len() as int);
+            crate::proof::keys::pairs_push(
+                separator_state.seq().take(separator_state.index()), Some(separator), sep_idx);
+            assert(separator_state.seq().take(separator_state.index() + 1)
+                =~= separator_state.seq().take(separator_state.index()).push(sep_idx));
+            crate::proof::keys::append_field(token_buffer@, start, sep_idx);
+        }
         token_buffer.push(start..sep_idx);
         start = sep_idx + 1;
     }
     if start < line.len() {
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof::keys::append_field(token_buffer@, start, line.len()); }
         token_buffer.push(start..line.len());
     }
 }
 
 #[derive(Clone, PartialEq, Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct KeyPosition {
     /// 1-indexed, 0 is invalid.
     field: usize,
@@ -1248,6 +1542,7 @@ fn parse_ordering_options<'a>(
 }
 
 #[derive(Clone, PartialEq, Debug, Default)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct FieldSelector {
     from: KeyPosition,
     to: Option<KeyPosition>,
@@ -1257,6 +1552,69 @@ struct FieldSelector {
     // Selections are therefore not needed when this selector matches the whole line
     // or the sort mode is general-numeric.
     needs_selection: bool,
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+enum KeyResolution {
+    StartOfChar(usize),
+    EndOfChar(usize),
+    TooLow,
+    TooHigh,
+}
+
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::keys::valid_fields(line@, crate::proof::keys::optional_fields(tokens)),
+        crate::proof::keys::valid_position(crate::proof::keys::optional_fields(tokens),
+            (position.field, position.char, position.ignore_blanks)),
+    ensures crate::proof::keys::resolve_model(line@, crate::proof::keys::optional_fields(tokens),
+        (position.field, position.char, position.ignore_blanks)) == match result {
+            KeyResolution::StartOfChar(index) => crate::proof::keys::Resolution::Start(index as int),
+            KeyResolution::EndOfChar(index) => crate::proof::keys::Resolution::End(index as int),
+            KeyResolution::TooLow => crate::proof::keys::Resolution::Low,
+            KeyResolution::TooHigh => crate::proof::keys::Resolution::High,
+        },
+        match result {
+            KeyResolution::StartOfChar(index) => index < line.len(),
+            KeyResolution::EndOfChar(index) => 0 < index <= line.len(),
+            _ => true,
+        },
+))]
+fn key_resolve_index(
+    line: &[u8], tokens: Option<&[Field]>, position: &KeyPosition,
+) -> KeyResolution {
+    if matches!(tokens, Some(tokens) if tokens.len() < position.field) {
+        KeyResolution::TooHigh
+    } else if position.char == 0 {
+        let end = tokens.unwrap()[position.field - 1].end;
+        if end == 0 { KeyResolution::TooLow } else { KeyResolution::EndOfChar(end) }
+    } else {
+        let mut idx = if position.field == 1 { 0 }
+            else { tokens.unwrap()[position.field - 1].start };
+        if position.ignore_blanks {
+            #[cfg(not(verus_keep_ghost))]
+            let offset = line[idx..].iter().enumerate().find(|(_, c)| !is_blank(**c))
+                .map_or(line[idx..].len(), |(idx, _)| idx);
+            #[cfg(verus_keep_ghost)]
+            let offset = verus_exec_expr! {
+                crate::trusted::keys::find_index(&line[idx..],
+                    |byte: &u8| -> (result: bool)
+                        ensures result == !crate::proof::ascii_blank(*byte),
+                    { !is_blank(*byte) },
+                    Ghost(|byte: u8| !crate::proof::ascii_blank(byte)))
+            };
+            #[cfg(verus_keep_ghost)]
+            proof! { crate::proof::keys::found_blank_end(line@, idx as int, offset as int); }
+            idx += offset;
+        }
+        #[cfg(not(verus_keep_ghost))]
+        let offset = line[idx..].iter().enumerate().nth(position.char - 1)
+            .map_or(line[idx..].len(), |(idx, _)| idx);
+        #[cfg(verus_keep_ghost)]
+        let offset = crate::trusted::keys::nth_index(&line[idx..], position.char - 1);
+        idx += offset;
+        if idx >= line.len() { KeyResolution::TooHigh }
+        else { KeyResolution::StartOfChar(idx) }
+    }
 }
 
 impl FieldSelector {
@@ -1344,9 +1702,21 @@ impl FieldSelector {
         Ok(Self::new(from, to, settings))
     }
 
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires from.char > 0,
+        ensures result.from == from, result.to == to, result.settings == settings,
+            result.needs_tokens == (from.field != 1 || to.is_some()),
+            result.needs_selection == ((from.field != 1 || from.char != 1 || to.is_some()
+                || matches!(settings.mode, SortMode::Numeric | SortMode::HumanNumeric)
+                || from.ignore_blanks) && !matches!(settings.mode, SortMode::GeneralNumeric)),
+    ))]
     fn new(from: KeyPosition, to: Option<KeyPosition>, settings: KeySettings) -> Self {
         // A zero start position is rejected by `parse` before getting here.
+        #[cfg(not(verus_keep_ghost))]
         debug_assert_ne!(from.char, 0);
+        #[cfg(verus_keep_ghost)]
+        proof! { assert(from.char != 0); }
         Self {
             needs_selection: (from.field != 1
                 || from.char != 1
@@ -1363,12 +1733,26 @@ impl FieldSelector {
 
     /// Get the selection that corresponds to this selector for the line.
     /// If `needs_fields` returned false, tokens may be empty.
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires crate::proof::sorting::selector_ready(self),
+            self.needs_tokens ==> crate::proof::keys::valid_fields(line@,
+                Some(crate::proof::keys::field_values(tokens@))),
+            line.len() <= i64::MAX,
+            numeric_locale.thousands_sep is None, numeric_locale.decimal_pt == Some(b'.'),
+            crate::proof::comparisons::c_locale(),
+        ensures crate::proof::sorting::selection_valid(&result,
+            crate::proof::sorting::selection_input(line@, self, tokens@), self),
+    ))]
     fn get_selection<'a>(
         &self,
         line: &'a [u8],
         tokens: &[Field],
         numeric_locale: NumericLocaleSettings,
     ) -> Selection<'a> {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! { let ghost fields = tokens@; }
         // `get_range` expects `None` when we don't need tokens and would get confused by an empty vector.
         let tokens = if self.needs_tokens {
             Some(tokens)
@@ -1376,6 +1760,8 @@ impl FieldSelector {
             None
         };
         let mut range_str = &line[self.get_range(line, tokens)];
+        #[cfg(verus_keep_ghost)]
+        proof! { assert(range_str@ == crate::proof::sorting::selection_input(line@, self, fields)); }
         if self.settings.mode == SortMode::Numeric || self.settings.mode == SortMode::HumanNumeric {
             // Parse NumInfo for this number.
             let (info, num_range) = NumInfo::parse(
@@ -1403,95 +1789,60 @@ impl FieldSelector {
 
     /// Look up the range in the line that corresponds to this selector.
     /// If `needs_fields` returned false, tokens must be None.
+    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
+        requires crate::proof::keys::valid_fields(line@, crate::proof::keys::optional_fields(tokens)),
+            self.from.char > 0,
+            crate::proof::keys::valid_position(crate::proof::keys::optional_fields(tokens),
+                (self.from.field, self.from.char, self.from.ignore_blanks)),
+            tokens is None ==> self.to is None,
+            match self.to { None => true, Some(to) =>
+                crate::proof::keys::valid_position(crate::proof::keys::optional_fields(tokens),
+                    (to.field, to.char, to.ignore_blanks)) },
+        ensures result.start <= result.end <= line.len(),
+            line@.subrange(result.start as int, result.end as int)
+                == crate::proof::keys::native_extract_model(line@,
+                    crate::proof::keys::optional_fields(tokens),
+                    (self.from.field, self.from.char, self.from.ignore_blanks),
+                    match self.to { None => None, Some(to) =>
+                        Some((to.field, to.char, to.ignore_blanks)) }),
+    ))]
     fn get_range(&self, line: &[u8], tokens: Option<&[Field]>) -> Range<usize> {
-        enum Resolution {
-            // The start index of the resolved character, inclusive
-            StartOfChar(usize),
-            // The end index of the resolved character, exclusive.
-            // This is only returned if the character index is 0.
-            EndOfChar(usize),
-            // The resolved character would be in front of the first character
-            TooLow,
-            // The resolved character would be after the last character
-            TooHigh,
-        }
-
-        /// Get the index for this line given the [`KeyPosition`]
-        fn resolve_index(
-            line: &[u8],
-            tokens: Option<&[Field]>,
-            position: &KeyPosition,
-        ) -> Resolution {
-            if matches!(tokens, Some(tokens) if tokens.len() < position.field) {
-                Resolution::TooHigh
-            } else if position.char == 0 {
-                let end = tokens.unwrap()[position.field - 1].end;
-                if end == 0 {
-                    Resolution::TooLow
-                } else {
-                    Resolution::EndOfChar(end)
-                }
-            } else {
-                let mut idx = if position.field == 1 {
-                    // The first field always starts at 0.
-                    // We don't need tokens for this case.
-                    0
-                } else {
-                    tokens.unwrap()[position.field - 1].start
-                };
-                // strip blanks if needed
-                if position.ignore_blanks {
-                    idx += line[idx..]
-                        .iter()
-                        .enumerate()
-                        .find(|(_, c)| !is_blank(**c))
-                        .map_or(line[idx..].len(), |(idx, _)| idx);
-                }
-                // apply the character index
-                idx += line[idx..]
-                    .iter()
-                    .enumerate()
-                    .nth(position.char - 1)
-                    .map_or(line[idx..].len(), |(idx, _)| idx);
-                if idx >= line.len() {
-                    Resolution::TooHigh
-                } else {
-                    Resolution::StartOfChar(idx)
-                }
-            }
-        }
-
-        match resolve_index(line, tokens, &self.from) {
-            Resolution::StartOfChar(from) => {
-                let to = self.to.as_ref().map(|to| resolve_index(line, tokens, to));
+        match key_resolve_index(line, tokens, &self.from) {
+            KeyResolution::StartOfChar(from) => {
+                let to = match &self.to { None => None,
+                    Some(to) => Some(key_resolve_index(line, tokens, to)) };
 
                 let mut range = match to {
-                    Some(Resolution::StartOfChar(mut to)) => {
+                    Some(KeyResolution::StartOfChar(mut to)) => {
                         // We need to include the character at `to`.
                         to += 1;
                         from..to
                     }
-                    Some(Resolution::EndOfChar(to)) => from..to,
+                    Some(KeyResolution::EndOfChar(to)) => from..to,
                     // If `to` was not given or the match would be after the end of the line,
                     // match everything until the end of the line.
-                    None | Some(Resolution::TooHigh) => from..line.len(),
+                    None | Some(KeyResolution::TooHigh) => from..line.len(),
                     // If `to` is before the start of the line, report no match.
                     // This can happen if the line starts with a separator.
-                    Some(Resolution::TooLow) => 0..0,
+                    Some(KeyResolution::TooLow) => 0..0,
                 };
                 if range.start > range.end {
                     range.end = range.start;
                 }
                 range
             }
-            Resolution::TooLow | Resolution::EndOfChar(_) => {
+            KeyResolution::TooLow | KeyResolution::EndOfChar(_) => {
+                #[cfg(not(verus_keep_ghost))]
                 unreachable!(
                     "This should only happen if the field start index is 0, but that should already have caused an error."
-                )
+                );
+                #[cfg(verus_keep_ghost)]
+                { proof! { assert(false); } 0..0 }
             }
             // While for comparisons it's only important that this is an empty slice,
             // to produce accurate debug output we need to match an empty slice at the end of the line.
-            Resolution::TooHigh => line.len()..line.len(),
+            KeyResolution::TooHigh => line.len()..line.len(),
         }
     }
 }
@@ -1867,17 +2218,25 @@ fn index_legacy_warnings(processed_args: &[OsString], legacy_warnings: &mut [Leg
 }
 
 #[cfg(target_os = "linux")]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const LINUX_BATCH_DIVISOR: usize = 4;
 #[cfg(target_os = "linux")]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const LINUX_BATCH_MIN: usize = 32;
 #[cfg(target_os = "linux")]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const LINUX_BATCH_MAX: usize = 256;
 
+#[cfg_attr(verus_keep_ghost, verus_spec(result => ensures result >= 2,))]
 fn default_merge_batch_size() -> usize {
     #[cfg(target_os = "linux")]
     {
         // Adjust merge batch size dynamically based on available file descriptors.
-        match fd_soft_limit() {
+        #[cfg(not(verus_keep_ghost))]
+        let limit = fd_soft_limit();
+        #[cfg(verus_keep_ghost)]
+        let limit = crate::trusted::descriptor_limit();
+        match limit {
             Some(limit) => {
                 let usable_limit = limit.saturating_div(LINUX_BATCH_DIVISOR);
                 usable_limit.clamp(LINUX_BATCH_MIN, LINUX_BATCH_MAX)
@@ -2771,32 +3130,92 @@ fn exec(
                 translate!("sort-only-one-file-allowed-with-c"),
             ))
         } else {
-            check::check(files.first().unwrap(), settings)
+            check::check(files.first().unwrap(), settings).map_err(Into::into)
         }
     } else if settings.merge {
-        merge::merge(files, settings, output, tmp_dir)
+        merge::merge(files, settings, output, tmp_dir).map_err(Into::into)
     } else {
         // Open each input once, when it is reached, so that only one input is open
         // at a time and FIFOs are never reopened.
-        let mut lines = files.iter().map(open);
-        ext_sort(&mut lines, settings, output, tmp_dir)
+        let mut lines = files.iter().map(open).map(|file| file.map_err(Into::into));
+        ext_sort(&mut lines, settings, output, tmp_dir).map_err(Into::into)
     }
 }
 
+#[cfg(verus_keep_ghost)]
+#[verus_verify]
+pub struct SortComparator<'s, 'a> {
+    pub settings: &'s GlobalSettings,
+    pub line_data: &'s LineData<'a>,
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+    impl<'s, 'a> crate::proof::unwind::Comparator<Line<'a>> for SortComparator<'s, 'a> {
+        open spec fn valid(&self, line: Line<'a>) -> bool {
+            crate::proof::native_settings_valid(self.settings)
+                && crate::proof::cached_line(&line, self.settings, self.line_data)
+        }
+        open spec fn view(&self, line: Line<'a>) -> Seq<u8> {
+            crate::proof::sorting::native_line(&line)
+        }
+        open spec fn model(&self) -> crate::proof::sorting::Comparator {
+            crate::proof::sorting::native_compare(self.settings)
+        }
+        fn compare(&self, a: &Line<'a>, b: &Line<'a>) -> Ordering {
+            compare_by(a, b, self.settings, self.line_data, self.line_data)
+        }
+    }
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(
+    requires crate::proof::native_settings_valid(settings), crate::trusted::unwind::rayon_ready(),
+        forall|i: int| #![auto] 0 <= i < old(unsorted).len() ==>
+            crate::proof::cached_line(&old(unsorted)@[i], settings, line_data),
+    ensures final(unsorted)@.to_multiset() == old(unsorted)@.to_multiset(),
+        crate::proof::sorting::sorting_result(
+            crate::proof::sorting::native_owned(old(unsorted)@),
+            crate::proof::sorting::native_owned(final(unsorted)@),
+            settings.stable || settings.unique, crate::proof::sorting::native_compare(settings)),
+    no_unwind
+))]
 fn sort_by<'a>(unsorted: &mut Vec<Line<'a>>, settings: &GlobalSettings, line_data: &LineData<'a>) {
+    #[cfg(verus_keep_ghost)]
+    proof_decl! { let ghost original = unsorted@; }
+    #[cfg(not(verus_keep_ghost))]
     let cmp = |a: &Line<'a>, b: &Line<'a>| compare_by(a, b, settings, line_data, line_data);
+    #[cfg(verus_keep_ghost)]
+    let cmp = SortComparator { settings, line_data };
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        crate::proof::native_settings_facts(settings);
+        crate::proof::sorting::native_compare_model(settings);
+        crate::proof::comparisons::order_lawful(&settings.specification@->Some_0);
+    }
     // WASI does not support threads, so use non-parallel sort to avoid
     // rayon's thread pool which triggers an unreachable trap.
     if settings.stable || settings.unique {
-        #[cfg(not(target_os = "wasi"))]
+        #[cfg(all(not(verus_keep_ghost), not(target_os = "wasi")))]
         unsorted.par_sort_by(cmp);
-        #[cfg(target_os = "wasi")]
+        #[cfg(all(not(verus_keep_ghost), target_os = "wasi"))]
         unsorted.sort_by(cmp);
+        #[cfg(verus_keep_ghost)]
+        crate::trusted::unwind::sort_values(unsorted, true, &cmp);
     } else {
-        #[cfg(not(target_os = "wasi"))]
+        #[cfg(all(not(verus_keep_ghost), not(target_os = "wasi")))]
         unsorted.par_sort_unstable_by(cmp);
-        #[cfg(target_os = "wasi")]
+        #[cfg(all(not(verus_keep_ghost), target_os = "wasi"))]
         unsorted.sort_unstable_by(cmp);
+        #[cfg(verus_keep_ghost)]
+        crate::trusted::unwind::sort_values(unsorted, false, &cmp);
+    }
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        assert(original.map_values(|line: Line<'a>| cmp.view(line))
+            =~= crate::proof::sorting::native_owned(original));
+        assert(unsorted@.map_values(|line: Line<'a>| cmp.view(line))
+            =~= crate::proof::sorting::native_owned(unsorted@));
     }
 }
 
@@ -2810,6 +3229,14 @@ fn sort_by<'a>(unsorted: &mut Vec<Line<'a>>, settings: &GlobalSettings, line_dat
 /// Skipping that per-line work (see `merge_without_limit`) is what makes `sort -m` of
 /// already-sorted input fast.
 #[inline]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::native_settings_valid(settings),
+        crate::proof::cached_line(a, settings, a_line_data),
+        crate::proof::cached_line(b, settings, b_line_data),
+    ensures result == crate::proof::sorting::native_compare(settings)(
+        crate::proof::sorting::native_line(a), crate::proof::sorting::native_line(b)),
+))]
 pub fn merge_compare<'a>(
     a: &Line<'a>,
     b: &Line<'a>,
@@ -2817,6 +3244,8 @@ pub fn merge_compare<'a>(
     a_line_data: &LineData<'a>,
     b_line_data: &LineData<'a>,
 ) -> Ordering {
+    #[cfg(verus_keep_ghost)]
+    proof! { crate::proof::sorting::native_line_value(a); crate::proof::sorting::native_line_value(b); }
     #[cfg(feature = "i18n-collator")]
     if settings.precomputed.fast_locale_collation {
         return compare_lines_with_collator(a, b, settings);
@@ -2841,6 +3270,15 @@ fn compare_lines_with_collator(a: &Line<'_>, b: &Line<'_>, settings: &GlobalSett
     if settings.reverse { cmp.reverse() } else { cmp }
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::native_settings_valid(global_settings),
+        crate::proof::cached_line(a, global_settings, a_line_data),
+        crate::proof::cached_line(b, global_settings, b_line_data),
+    ensures result == crate::proof::sorting::native_compare(global_settings)(
+        crate::proof::sorting::native_line(a), crate::proof::sorting::native_line(b)),
+    no_unwind
+))]
 fn compare_by<'a>(
     a: &Line<'a>,
     b: &Line<'a>,
@@ -2848,8 +3286,28 @@ fn compare_by<'a>(
     a_line_data: &LineData<'a>,
     b_line_data: &LineData<'a>,
 ) -> Ordering {
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        crate::proof::native_settings_facts(global_settings);
+        crate::proof::cached_line_facts(a, global_settings, a_line_data);
+        crate::proof::cached_line_facts(b, global_settings, b_line_data);
+        crate::proof::sorting::native_line_value(a);
+        crate::proof::sorting::native_line_value(b);
+        crate::proof::sorting::native_compare_model(global_settings);
+        crate::proof::comparisons::native::model_alignment(a.line@, b.line@, global_settings);
+    }
     if global_settings.precomputed.fast_lexicographic {
+        #[cfg(not(verus_keep_ghost))]
         let cmp = a.line.cmp(b.line);
+        #[cfg(verus_keep_ghost)]
+        let cmp = crate::trusted::compare_byte_slices(a.line, b.line);
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            assert(crate::proof::mapped_case(a.line@, false) =~= a.line@);
+            assert(crate::proof::mapped_case(b.line@, false) =~= b.line@);
+            crate::proof::byte_order_equal(a.line@, b.line@);
+            comparison_proof::fast_text(a.line@, b.line@, global_settings, false);
+        }
         return if global_settings.reverse {
             cmp.reverse()
         } else {
@@ -2877,7 +3335,17 @@ fn compare_by<'a>(
 
     if global_settings.precomputed.fast_ascii_insensitive {
         let cmp = ascii_case_insensitive_cmp(a.line, b.line);
-        if cmp != Ordering::Equal || a.line == b.line {
+        if !matches!(cmp, Ordering::Equal) || {
+            #[cfg(not(verus_keep_ghost))]
+            { a.line == b.line }
+            #[cfg(verus_keep_ghost)]
+            { crate::trusted::comparisons::equal_bytes(a.line, b.line) }
+        } {
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                if cmp == Ordering::Equal { assert(a.line@ =~= b.line@); }
+                comparison_proof::fast_text(a.line@, b.line@, global_settings, true);
+            }
             return if global_settings.reverse {
                 cmp.reverse()
             } else {
@@ -2890,14 +3358,34 @@ fn compare_by<'a>(
     let mut num_info_index = 0;
     let mut parsed_float_index = 0;
 
-    if let (Some(Some(a_f64)), Some(Some(b_f64))) = (
+    #[cfg(not(verus_keep_ghost))]
+    let hints = (
         a_line_data.line_num_floats.get(a.index),
         b_line_data.line_num_floats.get(b.index),
-    ) {
+    );
+    #[cfg(verus_keep_ghost)]
+    let hints = (
+        crate::trusted::comparisons::vec_get(&a_line_data.line_num_floats, a.index),
+        crate::trusted::comparisons::vec_get(&b_line_data.line_num_floats, b.index),
+    );
+    if let (Some(Some(a_f64)), Some(Some(b_f64))) = hints {
         // we don't use total_cmp() because it always sorts -0 before 0
-        if let Some(cmp) = a_f64.partial_cmp(b_f64) {
+        #[cfg(not(verus_keep_ghost))]
+        let float_order = a_f64.partial_cmp(b_f64);
+        #[cfg(verus_keep_ghost)]
+        let float_order = crate::trusted::comparisons::float_partial_cmp(a_f64, b_f64);
+        if let Some(cmp) = float_order {
             // don't trust `Ordering::Equal` if lines are not fully equal
-            if cmp != Ordering::Equal || a.line == b.line {
+            if !matches!(cmp, Ordering::Equal) || {
+                #[cfg(not(verus_keep_ghost))]
+                { a.line == b.line }
+                #[cfg(verus_keep_ghost)]
+                { crate::trusted::comparisons::equal_bytes(a.line, b.line) }
+            } {
+                #[cfg(verus_keep_ghost)]
+                proof! {
+                    comparison_proof::fast_numeric(a.line@, b.line@, global_settings, *a_f64, *b_f64, cmp);
+                }
                 return if global_settings.reverse {
                     cmp.reverse()
                 } else {
@@ -2907,13 +3395,62 @@ fn compare_by<'a>(
         }
     }
 
-    for selector in &global_settings.selectors {
+    #[cfg(not(verus_keep_ghost))]
+    let mut selectors_iter = global_settings.selectors.iter();
+    #[cfg(verus_keep_ghost)]
+    let mut selectors_iter = crate::trusted::comparisons::vec_refs(&global_settings.selectors);
+    #[cfg(verus_keep_ghost)]
+    let mut selector_index = 0usize;
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant selectors_iter.values() == global_settings.selectors@,
+            selectors_iter.index() == selector_index,
+            selector_index <= global_settings.selectors.len(),
+            crate::proof::native_settings_valid(global_settings),
+            crate::proof::cache_contents(a, global_settings, a_line_data),
+            crate::proof::cache_contents(b, global_settings, b_line_data),
+            crate::proof::cached_line(a, global_settings, a_line_data),
+            crate::proof::cached_line(b, global_settings, b_line_data),
+            selection_index == crate::proof::cache_index(global_settings, 0, selector_index as int, 0),
+            num_info_index == crate::proof::cache_index(global_settings, 0, selector_index as int, 1),
+            parsed_float_index == crate::proof::cache_index(global_settings, 0, selector_index as int, 2),
+            comparison_proof::primary(a.line@, b.line@, global_settings, 0)
+                == comparison_proof::primary(a.line@, b.line@, global_settings, selector_index as int),
+        ensures selector_index == global_settings.selectors.len(),
+        decreases global_settings.selectors.len() - selector_index,
+    ))]
+    while let Some(selector) = selectors_iter.next() {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! {
+            let ghost selector_i = selector_index as int;
+            let ghost raw_a = crate::proof::native_selected(a.line@, selector, global_settings.separator);
+            let ghost raw_b = crate::proof::native_selected(b.line@, selector, global_settings.separator);
+        }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            crate::proof::native_settings_facts(global_settings);
+            crate::proof::sorting::cache_counts(global_settings);
+            comparison_proof::selector_supported(global_settings, selector_i);
+            comparison_proof::primary_step(a.line@, b.line@, global_settings, selector_i);
+            comparison_proof::counter_step(global_settings, selector_i, 0);
+            comparison_proof::counter_step(global_settings, selector_i, 1);
+            comparison_proof::counter_step(global_settings, selector_i, 2);
+            comparison_proof::cached_indices(a, global_settings, a_line_data, selector_i);
+            comparison_proof::cached_indices(b, global_settings, b_line_data, selector_i);
+        }
         let (a_str, b_str) = if selector.needs_selection {
+            #[cfg(not(verus_keep_ghost))]
             let selections = (
                 a_line_data.selections
                     [a.index * global_settings.precomputed.selections_per_line + selection_index],
                 b_line_data.selections
                     [b.index * global_settings.precomputed.selections_per_line + selection_index],
+            );
+            #[cfg(verus_keep_ghost)]
+            let selections = (
+                *crate::trusted::comparisons::vec_at(&a_line_data.selections,
+                    a.index * global_settings.precomputed.selections_per_line + selection_index),
+                *crate::trusted::comparisons::vec_at(&b_line_data.selections,
+                    b.index * global_settings.precomputed.selections_per_line + selection_index),
             );
             selection_index += 1;
             selections
@@ -2925,6 +3462,7 @@ fn compare_by<'a>(
         let settings = &selector.settings;
 
         let cmp: Ordering = match settings.mode {
+            #[cfg(not(verus_keep_ghost))]
             SortMode::Random => {
                 // check if the two strings are equal
                 if custom_str_cmp(
@@ -2942,31 +3480,76 @@ fn compare_by<'a>(
                 }
             }
             SortMode::Numeric => {
+                #[cfg(not(verus_keep_ghost))]
                 let a_num_info = &a_line_data.num_infos
                     [a.index * global_settings.precomputed.num_infos_per_line + num_info_index];
+                #[cfg(not(verus_keep_ghost))]
                 let b_num_info = &b_line_data.num_infos
                     [b.index * global_settings.precomputed.num_infos_per_line + num_info_index];
+                #[cfg(verus_keep_ghost)]
+                let a_num_info = crate::trusted::comparisons::vec_at(&a_line_data.num_infos,
+                    a.index * global_settings.precomputed.num_infos_per_line + num_info_index);
+                #[cfg(verus_keep_ghost)]
+                let b_num_info = crate::trusted::comparisons::vec_at(&b_line_data.num_infos,
+                    b.index * global_settings.precomputed.num_infos_per_line + num_info_index);
                 num_info_index += 1;
+                #[cfg(verus_keep_ghost)]
+                proof! {
+                    crate::proof::parsing::decimal_valid(raw_a, false, settings.ignore_case);
+                    crate::proof::parsing::decimal_valid(raw_b, false, settings.ignore_case);
+                    crate::proof::comparisons::native_numeric_decimal(a_str@, a_num_info.exponent as int,
+                        a_num_info.sign is Negative, crate::proof::comparisons::decimal_model(raw_a, false, false),
+                        b_str@, b_num_info.exponent as int, b_num_info.sign is Negative,
+                        crate::proof::comparisons::decimal_model(raw_b, false, false));
+                }
                 numeric_str_cmp((a_str, a_num_info), (b_str, b_num_info))
             }
             SortMode::HumanNumeric => {
+                #[cfg(not(verus_keep_ghost))]
                 let a_num_info = &a_line_data.num_infos
                     [a.index * global_settings.precomputed.num_infos_per_line + num_info_index];
+                #[cfg(not(verus_keep_ghost))]
                 let b_num_info = &b_line_data.num_infos
                     [b.index * global_settings.precomputed.num_infos_per_line + num_info_index];
+                #[cfg(verus_keep_ghost)]
+                let a_num_info = crate::trusted::comparisons::vec_at(&a_line_data.num_infos,
+                    a.index * global_settings.precomputed.num_infos_per_line + num_info_index);
+                #[cfg(verus_keep_ghost)]
+                let b_num_info = crate::trusted::comparisons::vec_at(&b_line_data.num_infos,
+                    b.index * global_settings.precomputed.num_infos_per_line + num_info_index);
                 num_info_index += 1;
+                #[cfg(verus_keep_ghost)]
+                proof! {
+                    crate::proof::parsing::decimal_valid(raw_a, true, settings.ignore_case);
+                    crate::proof::parsing::decimal_valid(raw_b, true, settings.ignore_case);
+                    crate::proof::comparisons::native_human_matches(a_str@, a_num_info.exponent as int,
+                        a_num_info.sign is Negative, crate::proof::comparisons::decimal_model(raw_a, true, settings.ignore_case),
+                        b_str@, b_num_info.exponent as int, b_num_info.sign is Negative,
+                        crate::proof::comparisons::decimal_model(raw_b, true, settings.ignore_case));
+                }
                 human_numeric_str_cmp((a_str, a_num_info), (b_str, b_num_info))
             }
             SortMode::GeneralNumeric => {
+                #[cfg(not(verus_keep_ghost))]
                 let a_float = &a_line_data.parsed_floats
                     [a.index * global_settings.precomputed.floats_per_line + parsed_float_index];
+                #[cfg(not(verus_keep_ghost))]
                 let b_float = &b_line_data.parsed_floats
                     [b.index * global_settings.precomputed.floats_per_line + parsed_float_index];
+                #[cfg(verus_keep_ghost)]
+                let a_float = crate::trusted::comparisons::vec_at(&a_line_data.parsed_floats,
+                    a.index * global_settings.precomputed.floats_per_line + parsed_float_index);
+                #[cfg(verus_keep_ghost)]
+                let b_float = crate::trusted::comparisons::vec_at(&b_line_data.parsed_floats,
+                    b.index * global_settings.precomputed.floats_per_line + parsed_float_index);
                 parsed_float_index += 1;
                 general_numeric_compare(a_float, b_float)
             }
             SortMode::Month => month_compare(a_str, b_str),
+            #[cfg(not(verus_keep_ghost))]
             SortMode::Version => version_cmp(a_str, b_str),
+            #[cfg(verus_keep_ghost)]
+            SortMode::Version | SortMode::Random => { proof! { assert(false); } Ordering::Equal },
             SortMode::Default => {
                 // Use locale-aware comparison if feature is enabled and no custom flags are set
                 #[cfg(feature = "i18n-collator")]
@@ -2998,19 +3581,43 @@ fn compare_by<'a>(
                 }
             }
         };
-        if cmp != Ordering::Equal {
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            reveal(crate::proof::comparisons::key_base_model);
+            assert(crate::proof::comparisons::reverse_if_model(cmp, settings.reverse)
+                == comparison_proof::selector_order(a.line@, b.line@, selector, global_settings.separator));
+            comparison_proof::model_alignment(a.line@, b.line@, global_settings);
+            crate::proof::sorting::native_compare_model(global_settings);
+            crate::proof::sorting::native_line_value(a);
+            crate::proof::sorting::native_line_value(b);
+        }
+        if !matches!(cmp, Ordering::Equal) {
             return if settings.reverse { cmp.reverse() } else { cmp };
         }
+        #[cfg(verus_keep_ghost)]
+        { selector_index += 1; }
+    }
+
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        comparison_proof::primary_step(a.line@, b.line@, global_settings, global_settings.selectors.len() as int);
+        comparison_proof::model_alignment(a.line@, b.line@, global_settings);
+        crate::proof::sorting::native_compare_model(global_settings);
+        crate::proof::sorting::native_line_value(a);
+        crate::proof::sorting::native_line_value(b);
     }
 
     // Call "last resort compare" if all selectors returned Equal
-    let cmp = if global_settings.mode == SortMode::Random
+    let cmp = if matches!(global_settings.mode, SortMode::Random)
         || global_settings.stable
         || global_settings.unique
     {
         Ordering::Equal
     } else {
-        a.line.cmp(b.line)
+        #[cfg(not(verus_keep_ghost))]
+        { a.line.cmp(b.line) }
+        #[cfg(verus_keep_ghost)]
+        { crate::trusted::compare_byte_slices(a.line, b.line) }
     };
 
     if global_settings.reverse {
@@ -3020,24 +3627,62 @@ fn compare_by<'a>(
     }
 }
 
+#[inline]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    ensures result == crate::proof::ascii_upper(byte),
+    no_unwind
+))]
+fn fold(byte: u8) -> u8 {
+    byte.to_ascii_uppercase()
+}
+
 /// Compare two byte slices in ASCII case-insensitive order without allocating.
 /// We upper each byte on the fly so that binary input (including `NUL`) stays
 /// untouched and we avoid locale-sensitive routines such as `strcasecmp`.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    ensures result == crate::proof::byte_order(
+        crate::proof::mapped_case(a@, true), crate::proof::mapped_case(b@, true)),
+    no_unwind
+))]
 fn ascii_case_insensitive_cmp(a: &[u8], b: &[u8]) -> Ordering {
-    #[inline]
-    fn fold(byte: u8) -> u8 {
-        byte.to_ascii_uppercase()
-    }
-
-    for (lhs, rhs) in a.iter().copied().zip(b.iter().copied()) {
+    #[cfg(not(verus_keep_ghost))]
+    let pairs = a.iter().copied().zip(b.iter().copied());
+    #[cfg(not(verus_keep_ghost))]
+    for (lhs, rhs) in pairs {
         let l = fold(lhs);
         let r = fold(rhs);
         if l != r {
             return l.cmp(&r);
         }
     }
-
-    a.len().cmp(&b.len())
+    #[cfg(not(verus_keep_ghost))]
+    { a.len().cmp(&b.len()) }
+    #[cfg(verus_keep_ghost)]
+    {
+        let a_len = crate::trusted::comparisons::slice_len(a);
+        let b_len = crate::trusted::comparisons::slice_len(b);
+        let mut index = 0usize;
+        proof! { assert(a@.skip(0) =~= a@); assert(b@.skip(0) =~= b@); }
+        #[verus_spec(invariant index <= a_len, index <= b_len,
+            a_len == a.len(), b_len == b.len(),
+            crate::proof::byte_order(crate::proof::mapped_case(a@, true), crate::proof::mapped_case(b@, true))
+                == crate::proof::byte_order(crate::proof::mapped_case(a@.skip(index as int), true),
+                    crate::proof::mapped_case(b@.skip(index as int), true)),
+            decreases a_len - index,
+        )]
+        while index < a_len && index < b_len {
+            let l = fold(*crate::trusted::comparisons::slice_at(a, index));
+            let r = fold(*crate::trusted::comparisons::slice_at(b, index));
+            proof! { crate::proof::folded_step(a@, b@, index as int); }
+            if l != r {
+                proof! { crate::proof::byte_order_singleton(l, r); }
+                return crate::trusted::comparisons::cmp_u8(l, r);
+            }
+            index += 1;
+        }
+        crate::trusted::comparisons::cmp_usize(a_len, b_len)
+    }
 }
 
 // This function cleans up the initial comparison done by leading_num_common for a general numeric compare.
@@ -3045,33 +3690,101 @@ fn ascii_case_insensitive_cmp(a: &[u8], b: &[u8]) -> Ordering {
 // scientific notation, so we strip those lines only after the end of the following numeric string.
 // For example, 5e10KFD would be 5e10 or 5x10^10 and +10000HFKJFK would become 10000.
 #[allow(clippy::cognitive_complexity)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires decimal_pt == b'.',
+    ensures result.start <= result.end <= inp.len(),
+        inp@.subrange(result.start as int, result.end as int)
+            == crate::proof::comparisons::general_prefix_model(inp@),
+))]
 fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
     // check for inf, -inf and nan
-    const ALLOWED_PREFIXES: &[&[u8]] = &[b"inf", b"-inf", b"nan"];
+    #[cfg(not(verus_keep_ghost))]
+    let allowed_prefixes: &[&[u8]] = &[b"inf", b"-inf", b"nan"];
+    #[cfg(verus_keep_ghost)]
+    let allowed_prefixes: &[&[u8]] = &[&[b'i', b'n', b'f'], &[b'-', b'i', b'n', b'f'], &[b'n', b'a', b'n']];
 
+    #[cfg(not(verus_keep_ghost))]
     let trimmed = inp.trim_ascii_start();
+    #[cfg(verus_keep_ghost)]
+    let trimmed = crate::trusted::comparisons::trim_ascii_start(inp);
     let leading_whitespace_len = inp.len() - trimmed.len();
 
-    for &allowed_prefix in ALLOWED_PREFIXES {
-        if trimmed.len() >= allowed_prefix.len()
-            && trimmed[..allowed_prefix.len()].eq_ignore_ascii_case(allowed_prefix)
-        {
+    #[cfg_attr(verus_keep_ghost, verus_spec(state =>
+        invariant state.index() <= 3,
+            state.seq().len() == 3,
+            forall|i: int| #![auto] 0 <= i < 3 ==> state.seq()[i]@ == crate::proof::comparisons::prefix_word(i),
+            trimmed@ == inp@.skip(leading_whitespace_len as int),
+            leading_whitespace_len == crate::proof::comparisons::leading_white(inp@, 0),
+            leading_whitespace_len + trimmed.len() == inp.len(),
+            leading_whitespace_len <= inp.len(),
+            crate::proof::comparisons::special_prefix(trimmed@)
+                == crate::proof::comparisons::special_from(trimmed@, state.index()),
+    ))]
+    for allowed_prefix_ref in allowed_prefixes {
+        let allowed_prefix = *allowed_prefix_ref;
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof::comparisons::special_step(trimmed@, state.index()); }
+        #[cfg(not(verus_keep_ghost))]
+        let matches = trimmed.len() >= allowed_prefix.len()
+            && trimmed[..allowed_prefix.len()].eq_ignore_ascii_case(allowed_prefix);
+        #[cfg(verus_keep_ghost)]
+        let matches = trimmed.len() >= allowed_prefix.len()
+            && crate::trusted::comparisons::equal_folded(&trimmed[..allowed_prefix.len()], allowed_prefix);
+        if matches {
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                assert(inp@.subrange(leading_whitespace_len as int,
+                    (leading_whitespace_len + allowed_prefix.len()) as int)
+                    =~= trimmed@.take(allowed_prefix.len() as int));
+            }
             return leading_whitespace_len..(leading_whitespace_len + allowed_prefix.len());
         }
     }
     // Make this iter peekable to see if next char is numeric
+    #[cfg(not(verus_keep_ghost))]
     let mut char_indices = itertools::peek_nth(trimmed.iter().enumerate());
+    #[cfg(verus_keep_ghost)]
+    let mut char_indices = crate::trusted::comparisons::indexed_peek(trimmed);
 
     let first = char_indices.peek();
 
-    if matches!(first, Some((_, NEGATIVE | POSITIVE))) {
+    if matches!(first, Some((_, b'-' | b'+'))) {
         char_indices.next();
     }
 
     let mut had_e_notation = false;
     let mut had_decimal_pt = false;
     let mut had_hex_notation: bool = false;
-    while let Some((idx, &c)) = char_indices.next() {
+    #[cfg(verus_keep_ghost)]
+    proof_decl! {
+        let ghost end = crate::proof::comparisons::general_scan(inp@,
+            leading_whitespace_len + char_indices.position(), false, false, false);
+    }
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        crate::proof::comparisons::general_scan_bounds(inp@,
+            leading_whitespace_len + char_indices.position(), false, false, false);
+    }
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant char_indices.bytes() == trimmed@, char_indices.position() <= trimmed.len(),
+            trimmed@ == inp@.skip(leading_whitespace_len as int),
+            leading_whitespace_len == crate::proof::comparisons::leading_white(inp@, 0),
+            leading_whitespace_len + trimmed.len() == inp.len(),
+            leading_whitespace_len <= end <= inp.len(),
+            decimal_pt == b'.',
+            crate::proof::comparisons::special_prefix(trimmed@) == 0,
+            crate::proof::comparisons::general_prefix_model(inp@)
+                == inp@.subrange(leading_whitespace_len as int, end),
+            end == crate::proof::comparisons::general_scan(inp@,
+                leading_whitespace_len + char_indices.position(), had_hex_notation, had_decimal_pt, had_e_notation),
+        ensures char_indices.position() == trimmed.len(), end == inp.len(),
+        decreases trimmed.len() - char_indices.position(),
+    ))]
+    while let Some((idx, c_ref)) = char_indices.next() {
+        let c = *c_ref;
+        #[cfg(verus_keep_ghost)]
+        proof! { reveal(crate::proof::comparisons::general_scan); }
         if had_hex_notation && c.is_ascii_hexdigit() {
             continue;
         }
@@ -3092,7 +3805,8 @@ fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
         let is_hex_e = (c == b'p' || c == b'P') && had_hex_notation;
         if (is_decimal_e || is_hex_e) && !had_e_notation {
             // we can only consume the 'e' if what follow is either a digit, or a sign followed by a digit.
-            if let Some(&(_, &next_char)) = char_indices.peek() {
+            if let Some(next) = char_indices.peek() {
+                let next_char = *next.1;
                 if (next_char == b'+' || next_char == b'-')
                     && matches!(
                         char_indices.peek_nth(1),
@@ -3112,10 +3826,13 @@ fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
         }
         return leading_whitespace_len..(leading_whitespace_len + idx);
     }
+    #[cfg(verus_keep_ghost)]
+    proof! { assert(char_indices.position() == trimmed.len()); assert(end == inp.len()); }
     leading_whitespace_len..inp.len()
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub enum GeneralBigDecimalParseResult {
     Invalid,
     Nan,
@@ -3127,16 +3844,28 @@ pub enum GeneralBigDecimalParseResult {
 /// Parse the beginning string into a [`GeneralBigDecimalParseResult`].
 /// Using a [`GeneralBigDecimalParseResult`] instead of [`ExtendedBigDecimal`] is necessary to correctly order floats.
 #[inline(always)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires decimal_pt == b'.',
+    ensures crate::proof::comparisons::native_number_view(&result) == crate::proof::converted_number(a@),
+))]
 fn general_bd_parse(a: &[u8], decimal_pt: u8) -> GeneralBigDecimalParseResult {
+    #[cfg(not(verus_keep_ghost))]
     let parsed_bytes = (decimal_pt != DECIMAL_PT).then(|| {
         a.iter()
             .map(|&b| if b == decimal_pt { DECIMAL_PT } else { b })
             .collect::<Vec<_>>()
     });
-    let input = parsed_bytes.as_deref().unwrap_or(a);
+    #[cfg(verus_keep_ghost)]
+    let parsed_bytes = crate::trusted::comparisons::replace_decimal(a, decimal_pt);
+    let input = match &parsed_bytes { Some(bytes) => &bytes[..], None => a };
 
     // The string should be valid ASCII to be parsed.
-    let Ok(a) = std::str::from_utf8(input) else {
+    #[cfg(not(verus_keep_ghost))]
+    let decoded = std::str::from_utf8(input);
+    #[cfg(verus_keep_ghost)]
+    let decoded = crate::trusted::comparisons::utf8(input);
+    let Ok(a) = decoded else {
         return GeneralBigDecimalParseResult::Invalid;
     };
 
@@ -3164,11 +3893,20 @@ fn general_bd_parse(a: &[u8], decimal_pt: u8) -> GeneralBigDecimalParseResult {
 /// Compares two floats, with errors and non-numerics assumed to be -inf.
 /// Stops coercing at the first non-numeric char.
 /// We explicitly need to convert to f64 in this case.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    ensures result == crate::proof::comparisons::number_order(
+        crate::proof::comparisons::native_number_view(a), crate::proof::comparisons::native_number_view(b)),
+    no_unwind
+))]
 fn general_numeric_compare(
     a: &GeneralBigDecimalParseResult,
     b: &GeneralBigDecimalParseResult,
 ) -> Ordering {
-    a.partial_cmp(b).unwrap()
+    #[cfg(not(verus_keep_ghost))]
+    { a.partial_cmp(b).unwrap() }
+    #[cfg(verus_keep_ghost)]
+    { crate::trusted::comparisons::unwrap_order(crate::trusted::comparisons::derived_general_cmp(a, b)) }
 }
 
 /// Generate a 128-bit salt from a uniform RNG distribution.
@@ -3244,7 +3982,8 @@ fn random_shuffle(a: &[u8], b: &[u8], salt: &[u8]) -> Ordering {
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
-enum Month {
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub enum Month {
     Unknown,
     January,
     February,
@@ -3262,37 +4001,75 @@ enum Month {
 
 /// Cached locale month lookup table.
 /// Each entry is (`uppercased_name`, `month_value`).
-type MonthTable = Vec<(Vec<u8>, Month)>;
+pub type MonthTable = Vec<(Vec<u8>, Month)>;
 
+#[cfg(verus_keep_ghost)]
+verus! {
+pub struct MonthTableFactory { }
+
+impl crate::trusted::comparisons::MonthInitializer for MonthTableFactory {
+    open spec fn ready(&self) -> bool { crate::proof::comparisons::c_locale() }
+    fn initialize(&self) -> (result: Option<MonthTable>)
+        ensures result is None,
+    { init_month_table() }
+}
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::comparisons::c_locale(),
+    ensures result is None,
+    no_unwind
+))]
 fn get_locale_month_table() -> Option<&'static MonthTable> {
+    #[cfg(not(verus_keep_ghost))]
     static TABLE: OnceLock<Option<MonthTable>> = OnceLock::new();
 
-    TABLE
-        .get_or_init(|| {
-            let months = get_locale_months()?;
-            let all_months = [
-                Month::January,
-                Month::February,
-                Month::March,
-                Month::April,
-                Month::May,
-                Month::June,
-                Month::July,
-                Month::August,
-                Month::September,
-                Month::October,
-                Month::November,
-                Month::December,
-            ];
-            let table: Vec<(Vec<u8>, Month)> = months
-                .iter()
-                .zip(all_months.iter())
-                .map(|(name, &month)| (name.clone(), month))
-                .collect();
-            Some(table)
-        })
-        .as_ref()
+    #[cfg(not(verus_keep_ghost))]
+    { TABLE.get_or_init(init_month_table).as_ref() }
+    #[cfg(verus_keep_ghost)]
+    {
+        crate::trusted::comparisons::cached_none_months(MonthTableFactory { })
+    }
 }
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::comparisons::c_locale(),
+    ensures result is None,
+    no_unwind
+))]
+fn init_month_table() -> Option<MonthTable> {
+    let months = match get_locale_months() { Some(months) => months, None => return None };
+    let all_months = [
+        Month::January,
+        Month::February,
+        Month::March,
+        Month::April,
+        Month::May,
+        Month::June,
+        Month::July,
+        Month::August,
+        Month::September,
+        Month::October,
+        Month::November,
+        Month::December,
+    ];
+    #[cfg(not(verus_keep_ghost))]
+    let table: Vec<(Vec<u8>, Month)> = months
+        .iter()
+        .zip(all_months.iter())
+        .map(|(name, &month)| (name.clone(), month))
+        .collect();
+    #[cfg(verus_keep_ghost)]
+    let table = crate::trusted::comparisons::month_pairs(months, &all_months);
+    Some(table)
+}
+
+#[cfg(not(verus_keep_ghost))]
+fn trusted_month_equal(a: &Vec<u8>, b: &[u8; 3]) -> bool { a.as_slice() == b }
+#[cfg(verus_keep_ghost)]
+use crate::trusted::comparisons::equal_vec_array as trusted_month_equal;
 
 /// Parse the beginning string into a Month, returning [`Month::Unknown`] on errors.
 /// Also returns the byte length consumed from the input (after leading blanks).
@@ -3300,24 +4077,60 @@ fn get_locale_month_table() -> Option<&'static MonthTable> {
 /// The stored locale month names have blanks stripped and are uppercased.
 /// Comparison against input is case-insensitive but NOT blank-insensitive:
 /// the input must match the stored name exactly (after leading blank trimming).
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::comparisons::c_locale(),
+    ensures crate::proof::comparisons::native_month(result.0) == crate::proof::comparisons::month_model(line@),
+    no_unwind
+))]
 fn month_parse(line: &[u8]) -> (Month, usize) {
+    #[cfg(verus_keep_ghost)]
+    proof_decl! { let ghost input = line@; let ghost mut skipped = 0int; }
     let mut line = line;
-    while let [first, rest @ ..] = line
-        && is_blank(*first)
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant 0 <= skipped <= input.len(), line@ == input.skip(skipped),
+            forall|j: int| #![auto] 0 <= j < skipped ==> crate::proof::ascii_blank(input[j]),
+        decreases line.len(),
+    ))]
+    while {
+        #[cfg(not(verus_keep_ghost))]
+        { !line.is_empty() && is_blank(line[0]) }
+        #[cfg(verus_keep_ghost)]
+        { crate::trusted::comparisons::slice_len(line) > 0
+            && is_blank(*crate::trusted::comparisons::slice_at(line, 0)) }
+    }
     {
-        line = rest;
+        #[cfg(not(verus_keep_ghost))]
+        { line = &line[1..]; }
+        #[cfg(verus_keep_ghost)]
+        { line = crate::trusted::comparisons::slice_from(line, 1); }
+        #[cfg(verus_keep_ghost)]
+        proof! { skipped = skipped + 1; }
+    }
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        crate::proof::comparisons::blanks_end(input, 0, skipped);
+        reveal_with_fuel(crate::proof::comparisons::month_from, 13);
     }
 
     // Try locale-specific month names, keeping the longest match.
     // This handles cases where one name is a prefix of another
     // (e.g., Japanese "1" vs "10", "11", "12").
     if let Some(table) = get_locale_month_table() {
-        let mut best = None;
+        #[cfg(verus_keep_ghost)]
+        proof! { assert(false); }
+        #[cfg(not(verus_keep_ghost))]
+        {
+        let mut best: Option<(usize, Month)> = None;
         for (name, month) in table {
-            if line
+            #[cfg(not(verus_keep_ghost))]
+            let matches = line
                 .get(..name.len())
-                .is_some_and(|l| l.eq_ignore_ascii_case(name))
-                && best.as_ref().is_none_or(|&(len, _)| name.len() > len)
+                .is_some_and(|l| l.eq_ignore_ascii_case(name));
+            #[cfg(verus_keep_ghost)]
+            let matches = crate::trusted::comparisons::starts_folded(line, &name[..]);
+            let longer = match &best { Some((len, _)) => name.len() > *len, None => true };
+            if matches && longer
             {
                 best = Some((name.len(), *month));
             }
@@ -3325,44 +4138,127 @@ fn month_parse(line: &[u8]) -> (Month, usize) {
         if let Some((len, month)) = best {
             return (month, len);
         }
+        }
     }
 
     // Fall back to English 3-letter abbreviations
-    match line.get(..3).map(<[u8]>::to_ascii_uppercase).as_deref() {
-        Some(b"JAN") => (Month::January, 3),
-        Some(b"FEB") => (Month::February, 3),
-        Some(b"MAR") => (Month::March, 3),
-        Some(b"APR") => (Month::April, 3),
-        Some(b"MAY") => (Month::May, 3),
-        Some(b"JUN") => (Month::June, 3),
-        Some(b"JUL") => (Month::July, 3),
-        Some(b"AUG") => (Month::August, 3),
-        Some(b"SEP") => (Month::September, 3),
-        Some(b"OCT") => (Month::October, 3),
-        Some(b"NOV") => (Month::November, 3),
-        Some(b"DEC") => (Month::December, 3),
+    #[cfg(not(verus_keep_ghost))]
+    let prefix = line.get(..3).map(<[u8]>::to_ascii_uppercase);
+    #[cfg(verus_keep_ghost)]
+    let prefix = crate::trusted::comparisons::upper_prefix(line, 3);
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        crate::proof::comparisons::month_as_prefix(input, skipped);
+        match &prefix {
+            Some(name) => {
+                assert(line@.take(3) =~= input.subrange(skipped, skipped + 3));
+                assert(name@ =~= input.subrange(skipped, skipped + 3)
+                    .map_values(|byte: u8| crate::proof::ascii_upper(byte)));
+                assert(crate::proof::comparisons::month_model(input)
+                    == crate::proof::comparisons::english_month(name@));
+            },
+            None => {},
+        }
+    }
+    match &prefix {
+        Some(name) if crate::trusted_month_equal(name, &[b'J',b'A',b'N']) => (Month::January, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'F',b'E',b'B']) => (Month::February, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'M',b'A',b'R']) => (Month::March, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'A',b'P',b'R']) => (Month::April, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'M',b'A',b'Y']) => (Month::May, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'J',b'U',b'N']) => (Month::June, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'J',b'U',b'L']) => (Month::July, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'A',b'U',b'G']) => (Month::August, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'S',b'E',b'P']) => (Month::September, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'O',b'C',b'T']) => (Month::October, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'N',b'O',b'V']) => (Month::November, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'D',b'E',b'C']) => (Month::December, 3),
         _ => (Month::Unknown, 0),
     }
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires crate::proof::comparisons::c_locale(),
+    ensures result == crate::proof::comparisons::integer_order(
+        crate::proof::comparisons::month_model(a@) as int, crate::proof::comparisons::month_model(b@) as int),
+    no_unwind
+))]
 fn month_compare(a: &[u8], b: &[u8]) -> Ordering {
     let ma = month_parse(a).0;
     let mb = month_parse(b).0;
 
-    ma.cmp(&mb)
+    #[cfg(not(verus_keep_ghost))]
+    { ma.cmp(&mb) }
+    #[cfg(verus_keep_ghost)]
+    { crate::trusted::comparisons::cmp_month(&ma, &mb) }
 }
 
+#[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
+    requires !settings.debug,
+        crate::trusted::output_session(output) == old(log).session(),
+        vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&iter),
+        vstd::std_specs::iter::IteratorSpec::will_return_none(&iter),
+        vstd::std_specs::iter::IteratorSpec::decrease(&iter) is Some,
+    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+        final(log).bytes() == crate::proof::sorting::emit(
+            crate::proof::sorting::native_lines(vstd::std_specs::iter::IteratorSpec::remaining(&iter)),
+            crate::trusted::ending_byte(settings.line_ending)),
+))]
 fn print_sorted<'a, T: Iterator<Item = &'a Line<'a>>>(
     iter: T,
     settings: &GlobalSettings,
     output: Output,
-) -> UResult<()> {
-    let ctx = output.write_failed_context();
-    let mut writer = output.into_write()?;
-    for line in iter {
-        line.write(&mut writer, settings).map_err_context(&ctx)?;
+) -> SortResult<()> {
+    #[cfg(verus_keep_ghost)]
+    proof_decl! {
+        let ghost original = vstd::std_specs::iter::IteratorSpec::remaining(&iter);
+        let ghost session = log.session();
     }
+    #[cfg(not(verus_keep_ghost))]
+    let ctx = output.write_failed_context();
+    #[cfg(not(verus_keep_ghost))]
+    let mut writer = output.into_write()?;
+    #[cfg(verus_keep_ghost)]
+    proof_with! { Tracked(&mut *log) }
+    #[cfg(verus_keep_ghost)]
+    let mut writer = crate::trusted::output_writer(output)?;
+    #[cfg_attr(verus_keep_ghost, verus_spec(state =>
+        invariant !settings.debug,
+            state.seq() == original,
+            vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&state.iter),
+            vstd::std_specs::iter::IteratorSpec::will_return_none(&state.iter),
+            vstd::std_specs::iter::IteratorSpec::decrease(&state.iter) is Some,
+            log.session() == session,
+            crate::trusted::writer_session(&writer) == log.session(),
+            log.bytes() == crate::proof::sorting::emit(
+                crate::proof::sorting::native_lines(state.seq().take(state.index())),
+                crate::trusted::ending_byte(settings.line_ending)),
+    ))]
+    for line in iter {
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            crate::proof::sorting::native_line_value(line);
+            crate::proof::sorting::native_emit_step(state.seq(), state.index(),
+                crate::trusted::ending_byte(settings.line_ending));
+        }
+        #[cfg(not(verus_keep_ghost))]
+        line.write(&mut writer, settings).map_err_context(&ctx)?;
+        #[cfg(verus_keep_ghost)]
+        proof_with! { Tracked(&mut *log) }
+        #[cfg(verus_keep_ghost)]
+        line.write(&mut writer, settings)?;
+    }
+    #[cfg(verus_keep_ghost)]
+    proof! { assert(original.take(original.len() as int) =~= original); }
+    #[cfg(not(verus_keep_ghost))]
     writer.flush().map_err_context(ctx)?;
+    #[cfg(verus_keep_ghost)]
+    proof_with! { Tracked(&mut *log) }
+    #[cfg(verus_keep_ghost)]
+    crate::trusted::flush_output(&mut writer)?;
     Ok(())
 }
 
@@ -3398,16 +4294,16 @@ fn check_readable(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn open(path: impl AsRef<OsStr>) -> UResult<Box<dyn Read + Send>> {
+fn open(path: impl AsRef<OsStr>) -> UResult<InputReader> {
     let path = path.as_ref();
     if path == STDIN_FILE {
         let stdin = stdin();
-        return Ok(Box::new(stdin) as Box<dyn Read + Send>);
+        return Ok(boxed_reader(stdin));
     }
 
     let path = Path::new(path);
     match File::open(path) {
-        Ok(f) => Ok(Box::new(f) as Box<dyn Read + Send>),
+        Ok(f) => Ok(boxed_reader(f)),
         Err(error) => Err(SortError::ReadFailed {
             path: path.to_owned(),
             error,
@@ -3416,17 +4312,17 @@ fn open(path: impl AsRef<OsStr>) -> UResult<Box<dyn Read + Send>> {
     }
 }
 
-fn open_with_open_failed_error(path: impl AsRef<OsStr>) -> UResult<Box<dyn Read + Send>> {
+fn open_with_open_failed_error(path: impl AsRef<OsStr>) -> UResult<InputReader> {
     // On error, returns an OpenFailed error instead of a ReadFailed error
     let path = path.as_ref();
     if path == STDIN_FILE {
         let stdin = stdin();
-        return Ok(Box::new(stdin) as Box<dyn Read + Send>);
+        return Ok(boxed_reader(stdin));
     }
 
     let path = Path::new(path);
     match File::open(path) {
-        Ok(f) => Ok(Box::new(f) as Box<dyn Read + Send>),
+        Ok(f) => Ok(boxed_reader(f)),
         Err(error) => Err(SortError::OpenFailed {
             path: path.to_owned(),
             error,

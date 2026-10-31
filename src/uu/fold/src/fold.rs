@@ -5,28 +5,64 @@
 
 // spell-checker:ignore (ToDOs) ncount routput
 
+#[cfg(not(verus_keep_ghost))]
 use clap::{Arg, ArgAction, Command};
+#[cfg(not(verus_keep_ghost))]
 use std::ffi::{OsStr, OsString};
+#[cfg(not(verus_keep_ghost))]
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write, stdin, stdout};
+#[cfg(not(verus_keep_ghost))]
+use std::io::{BufRead, BufWriter, stdin, stdout};
+use std::io::{BufReader, Read, Write};
+#[cfg(not(verus_keep_ghost))]
 use std::num::IntErrorKind;
+#[cfg(not(verus_keep_ghost))]
 use std::path::Path;
+#[cfg(not(verus_keep_ghost))]
 use unicode_width::UnicodeWidthChar;
+#[cfg(not(verus_keep_ghost))]
 use uucore::display::Quotable;
+#[cfg(not(verus_keep_ghost))]
 use uucore::error::{FromIo, UResult, USimpleError};
+#[cfg(not(verus_keep_ghost))]
 use uucore::format_usage;
+#[cfg(not(verus_keep_ghost))]
 use uucore::show;
+#[cfg(not(verus_keep_ghost))]
 use uucore::translate;
 
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
+type UResult<T> = std::io::Result<T>;
+#[cfg(verus_keep_ghost)]
+use crate::{fold_trusted, trusted_common::io as io_trusted};
+#[cfg(not(verus_keep_ghost))]
+#[allow(dead_code)]
+#[path = "../../../../../fold/trusted_common.rs"]
+mod fold_trusted;
+#[cfg(not(verus_keep_ghost))]
+#[allow(dead_code, unused_imports, unused_macros)]
+#[path = "../../../../../trusted_common.rs"]
+mod trusted_common;
+#[cfg(not(verus_keep_ghost))]
+use trusted_common::io as io_trusted;
+
+#[cfg(not(verus_keep_ghost))]
 const TAB_WIDTH: usize = 8;
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 const NL: u8 = b'\n';
+#[cfg(not(verus_keep_ghost))]
 const CR: u8 = b'\r';
+#[cfg(not(verus_keep_ghost))]
 const TAB: u8 = b'\t';
 // Implementation threshold (8 KiB) to prevent unbounded buffer growth during streaming.
 // Chosen as a small, fixed cap: large enough to avoid excessive flushes, but
 // small enough to keep memory bounded when the input has no fold points.
+#[cfg(not(verus_keep_ghost))]
 const STREAMING_FLUSH_THRESHOLD: usize = 8 * 1024;
 
+#[cfg(not(verus_keep_ghost))]
 mod options {
     pub const BYTES: &str = "bytes";
     pub const CHARACTERS: &str = "characters";
@@ -36,11 +72,13 @@ mod options {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum WidthMode {
+#[cfg(not(verus_keep_ghost))]
+pub(crate) enum WidthMode {
     Columns,
     Characters,
 }
 
+#[cfg(not(verus_keep_ghost))]
 struct FoldContext<'a, W: Write> {
     spaces: bool,
     width: usize,
@@ -51,6 +89,7 @@ struct FoldContext<'a, W: Write> {
     last_space: &'a mut Option<usize>,
 }
 
+#[cfg(not(verus_keep_ghost))]
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let args = handle_obsolete(&args.collect::<Vec<_>>());
@@ -94,6 +133,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     fold(&files, bytes, characters, spaces, width)
 }
 
+#[cfg(not(verus_keep_ghost))]
 pub fn uu_app() -> Command {
     Command::new("fold")
         .version(uucore::crate_version!())
@@ -147,6 +187,7 @@ pub fn uu_app() -> Command {
 /// The check is deliberately loose: GNU rejects `-5x` with
 /// `invalid number of columns: '5x'` rather than treating it as a file, so
 /// anything starting with a digit is taken as a (possibly invalid) width.
+#[cfg(not(verus_keep_ghost))]
 fn is_obsolete_width(arg: &OsStr) -> bool {
     let bytes = arg.as_encoded_bytes();
     bytes.first() == Some(&b'-') && bytes.get(1).is_some_and(u8::is_ascii_digit)
@@ -154,6 +195,7 @@ fn is_obsolete_width(arg: &OsStr) -> bool {
 
 /// Whether `arg` is a `-w`/`--width` spelling that consumes the *next*
 /// argument as its value.
+#[cfg(not(verus_keep_ghost))]
 fn takes_width_value(arg: &OsStr) -> bool {
     let bytes = arg.as_encoded_bytes();
     if let Some(long) = bytes.strip_prefix(b"--") {
@@ -185,6 +227,7 @@ fn takes_width_value(arg: &OsStr) -> bool {
 /// terminator. Otherwise `fold -w -1` would misreport the file name as the
 /// invalid width, and `fold -- -3` would silently read stdin instead of
 /// failing to open the file named `-3`.
+#[cfg(not(verus_keep_ghost))]
 fn handle_obsolete(args: &[OsString]) -> Vec<OsString> {
     let mut result = Vec::with_capacity(args.len());
     let mut iter = args.iter();
@@ -217,6 +260,7 @@ fn handle_obsolete(args: &[OsString]) -> Vec<OsString> {
     result
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn fold(
     filenames: &[OsString],
     bytes: bool,
@@ -272,7 +316,13 @@ fn fold(
 /// to all other characters in the stream.
 ///
 ///  If `spaces` is `true`, attempt to break lines at whitespace boundaries.
-fn fold_file_bytewise<T: Read, W: Write>(
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires width > 0,
+        io_trusted::readable(&file), io_trusted::writable(old(output)),
+    ensures result is Ok,
+))]
+pub(crate) fn fold_file_bytewise<T: Read, W: Write>(
     mut file: BufReader<T>,
     spaces: bool,
     width: usize,
@@ -280,22 +330,39 @@ fn fold_file_bytewise<T: Read, W: Write>(
 ) -> UResult<()> {
     let mut line = Vec::new();
 
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant width > 0,
+            io_trusted::readable(&file), io_trusted::writable(output),
+        decreases line.len() + io_trusted::remaining(&file).len(),
+    ))]
     loop {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! {
+            let ghost pending = line.len() + io_trusted::remaining(&file).len();
+        }
         // Pull bytes from the reader until we have strictly more than `width`
         // buffered (enough to know whether content follows a width-driven fold)
         // or we reach EOF. Reading at most `width` bytes ahead keeps memory
         // bounded even on endless streams like /dev/zero, where the old
         // read_until(NL, ..) would buffer forever waiting for a newline.
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant width > 0,
+                io_trusted::readable(&file), io_trusted::writable(output),
+                line.len() + io_trusted::remaining(&file).len() == pending,
+            decreases io_trusted::remaining(&file).len(),
+        ))]
         while line.len() <= width {
-            let buf = file
-                .fill_buf()
+            #[cfg(not(verus_keep_ghost))]
+            let buf = fold_trusted::fill_buf(&mut file)
                 .map_err_context(|| translate!("fold-error-readline"))?;
+            #[cfg(verus_keep_ghost)]
+            let buf = fold_trusted::fill_buf(&mut file)?;
             if buf.is_empty() {
                 break;
             }
             let len = buf.len();
             line.extend_from_slice(buf);
-            file.consume(len);
+            fold_trusted::consume(&mut file, len);
         }
 
         // EOF with a tail shorter than (or equal to) `width`: no width/space
@@ -304,7 +371,7 @@ fn fold_file_bytewise<T: Read, W: Write>(
             if line.is_empty() {
                 break;
             }
-            output.write_all(&line)?;
+            io_trusted::write_all(output, &line)?;
             break;
         }
 
@@ -315,36 +382,39 @@ fn fold_file_bytewise<T: Read, W: Write>(
         // naturally; the newline is part of the slice, so no extra newline is
         // emitted. The lookahead byte is included because a line of exactly
         // `width` bytes needs no fold at all.
-        if let Some(end) = line[..=width].iter().position(|c| *c == NL).map(|i| i + 1) {
-            output.write_all(&line[..end])?;
-            line.drain(..end);
+        if let Some(position) = fold_trusted::position_eq(&line[..=width], NL) {
+            let end = position + 1;
+            io_trusted::write_all(output, &line[..end])?;
+            fold_trusted::drain_prefix(&mut line, end);
             continue;
         }
 
         // No newline: with -s, break after the last whitespace (excluding CR);
         // otherwise hard-wrap at `width`.
         let end = if spaces {
-            chunk
-                .iter()
-                .rposition(|c| c.is_ascii_whitespace() && *c != CR)
-                .map_or(width, |i| i + 1)
+            match fold_trusted::last_whitespace(chunk) {
+                Some(i) => i + 1,
+                None => width,
+            }
         } else {
             width
         };
 
         // Width/space-driven fold: `end <= width` and the check above ruled out
         // a newline there, so the break always needs one.
-        output.write_all(&line[..end])?;
-        output.write_all(&[NL])?;
-        line.drain(..end);
+        io_trusted::write_all(output, &line[..end])?;
+        io_trusted::write_all(output, &[NL])?;
+        fold_trusted::drain_prefix(&mut line, end);
     }
     Ok(())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn next_tab_stop(col_count: usize) -> usize {
     col_count + TAB_WIDTH - col_count % TAB_WIDTH
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn compute_col_count(buffer: &[u8], mode: WidthMode) -> usize {
     if let Ok(s) = std::str::from_utf8(buffer) {
         let mut width = 0;
@@ -376,6 +446,7 @@ fn compute_col_count(buffer: &[u8], mode: WidthMode) -> usize {
     }
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn emit_output<W: Write>(ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     // Emit one folded line:
     // - with `-s`, cut at the last remembered whitespace when possible
@@ -416,6 +487,7 @@ fn emit_output<W: Write>(ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     Ok(())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn maybe_flush_unbroken_output<W: Write>(ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     // In streaming mode without `-s`, avoid unbounded buffering by periodically
     // flushing long unbroken segments. With `-s` we must keep the buffer so we
@@ -431,12 +503,14 @@ fn maybe_flush_unbroken_output<W: Write>(ctx: &mut FoldContext<'_, W>) -> UResul
     Ok(())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn push_byte<W: Write>(ctx: &mut FoldContext<'_, W>, byte: u8) -> UResult<()> {
     // Append a single byte to the buffer.
     ctx.output.push(byte);
     maybe_flush_unbroken_output(ctx)
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn push_bytes<W: Write>(ctx: &mut FoldContext<'_, W>, bytes: &[u8]) -> UResult<()> {
     // Append a byte slice to the buffer and flush if it grows too large.
     if bytes.is_empty() {
@@ -446,6 +520,7 @@ fn push_bytes<W: Write>(ctx: &mut FoldContext<'_, W>, bytes: &[u8]) -> UResult<(
     maybe_flush_unbroken_output(ctx)
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn process_ascii_line<W: Write>(line: &[u8], ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     let mut idx = 0;
     let len = line.len();
@@ -519,6 +594,7 @@ fn process_ascii_line<W: Write>(line: &[u8], ctx: &mut FoldContext<'_, W>) -> UR
     Ok(())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn push_ascii_segment<W: Write>(segment: &[u8], ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     if segment.is_empty() {
         return Ok(());
@@ -556,6 +632,7 @@ fn push_ascii_segment<W: Write>(segment: &[u8], ctx: &mut FoldContext<'_, W>) ->
     Ok(())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn process_utf8_line<W: Write>(line: &str, ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     if line.is_ascii() {
         return process_ascii_line(line.as_bytes(), ctx);
@@ -564,6 +641,7 @@ fn process_utf8_line<W: Write>(line: &str, ctx: &mut FoldContext<'_, W>) -> URes
     process_utf8_chars(line, ctx)
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn process_utf8_chars<W: Write>(line: &str, ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     let line_bytes = line.as_bytes();
     let mut iter = line.char_indices().peekable();
@@ -651,6 +729,7 @@ fn process_utf8_chars<W: Write>(line: &str, ctx: &mut FoldContext<'_, W>) -> URe
     Ok(())
 }
 
+#[cfg(not(verus_keep_ghost))]
 fn process_non_utf8_line<W: Write>(line: &[u8], ctx: &mut FoldContext<'_, W>) -> UResult<()> {
     for &byte in line {
         if byte == NL {
@@ -698,6 +777,7 @@ fn process_non_utf8_line<W: Write>(line: &[u8], ctx: &mut FoldContext<'_, W>) ->
 ///
 /// If the buffer contains invalid UTF-8, it is handled in non-UTF-8 mode and
 /// the buffer is fully consumed.
+#[cfg(not(verus_keep_ghost))]
 fn process_pending_chunk<W: Write>(
     pending: &mut Vec<u8>,
     ctx: &mut FoldContext<'_, W>,
@@ -741,7 +821,8 @@ fn process_pending_chunk<W: Write>(
 /// If `spaces` is `true`, attempt to break lines at whitespace boundaries.
 #[allow(unused_assignments)]
 #[allow(clippy::cognitive_complexity)]
-fn fold_file<T: Read, W: Write>(
+#[cfg(not(verus_keep_ghost))]
+pub(crate) fn fold_file<T: Read, W: Write>(
     mut file: BufReader<T>,
     spaces: bool,
     width: usize,

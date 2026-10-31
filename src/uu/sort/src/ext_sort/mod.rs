@@ -12,6 +12,12 @@
 mod threaded;
 #[cfg(not(target_os = "wasi"))]
 pub use threaded::ext_sort;
+#[cfg(verus_keep_ghost)]
+pub(crate) use threaded::SortPipeTask;
+#[cfg(all(verus_keep_ghost, not(target_os = "wasi")))]
+pub(crate) use threaded::ReadResult;
+#[cfg(all(verus_keep_ghost, uutils_sort_full, not(target_os = "wasi")))]
+pub(crate) use threaded::_VERUS_VERIFIED_ext_sort;
 
 #[cfg(target_os = "wasi")]
 mod wasi;
