@@ -932,8 +932,28 @@ impl SymbolTranslator for DeleteOperation {
     }
 }
 
-#[cfg(not(verus_keep_ghost))]
+#[cfg(all(verus_keep_ghost, uutils_tr_delete))]
+verus! {
+    impl ChunkModel for DeleteOperation {
+        open spec fn chunk_valid(&self) -> bool {
+            match self.single_delete {
+                Some(byte) => forall|b: int| 0 <= b < 256 ==> self.keep_table@[b] == (b != byte as int),
+                None => true,
+            }
+        }
+        open spec fn chunk_output(&self, input: Seq<u8>) -> Seq<u8> {
+            crate::proof::reference_prefix(input, self.keep_table@, input.len() as int)
+        }
+        proof fn chunk_append(&self, left: Seq<u8>, right: Seq<u8>) {
+            crate::proof::append_prefix(left, right, self.keep_table@, right.len() as int);
+        }
+    }
+}
+
+#[cfg(any(not(verus_keep_ghost), uutils_tr_delete))]
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 impl ChunkProcessor for DeleteOperation {
+    #[cfg_attr(verus_keep_ghost, verus_spec)]
     fn process_chunk<'a>(&self, input: &'a [u8], output: &'a mut Vec<u8>) -> &'a [u8] {
         use crate::simd::{process_delete, process_single_delete};
 
@@ -1022,6 +1042,9 @@ verus! {
         }
         open spec fn chunk_output(&self, input: Seq<u8>) -> Seq<u8> {
             crate::tr_proof::table_prefix(input, self.translation_table@, input.len() as int)
+        }
+        proof fn chunk_append(&self, left: Seq<u8>, right: Seq<u8>) {
+            crate::proof::table_append(left, right, self.translation_table@, right.len() as int);
         }
     }
 }

@@ -5,9 +5,7 @@
 
 //! I/O processing infrastructure for tr operations with SIMD optimizations
 
-#[cfg(not(verus_keep_ghost))]
 use crate::operation::ChunkProcessor;
-#[cfg(not(verus_keep_ghost))]
 use std::io::{BufRead, Write};
 #[cfg(not(verus_keep_ghost))]
 use uucore::error::{FromIo, UResult};
@@ -18,14 +16,12 @@ use uucore::translate;
 use crate::proof::{reference_prefix, reference_step, write_prefix};
 #[cfg(all(verus_keep_ghost, uutils_tr_delete))]
 use crate::trusted::{chunks, chunks_match, count_kept};
-#[cfg(all(verus_keep_ghost, not(uutils_tr_delete)))]
-use std::io::Write;
 #[cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 
-#[cfg(all(verus_keep_ghost, not(uutils_tr_delete)))]
+#[cfg(verus_keep_ghost)]
 use crate::io_trusted;
-#[cfg(all(verus_keep_ghost, not(uutils_tr_delete)))]
+#[cfg(verus_keep_ghost)]
 type UResult<T> = std::io::Result<T>;
 #[cfg(not(verus_keep_ghost))]
 use crate::operation::io_trusted;
@@ -127,7 +123,12 @@ pub fn process_single_char_replace<'a>(
 /// SIMD-optimized delete operation for single character
 ///
 /// `keep` must be false for `delete_char` only.
-#[cfg(not(verus_keep_ghost))]
+#[cfg(any(not(verus_keep_ghost), uutils_tr_delete))]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires old(output).len() == 0,
+        forall|b: int| 0 <= b < 256 ==> keep@[b] == (b != delete_char as int),
+    ensures result@ == reference_prefix(input@, keep@, input@.len() as int),
+))]
 pub fn process_single_delete<'a>(
     input: &'a [u8],
     output: &'a mut Vec<u8>,
@@ -136,19 +137,65 @@ pub fn process_single_delete<'a>(
 ) -> &'a [u8] {
     let count = bytecount::count(input, delete_char);
     if count == 0 {
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof::kept_prefix(input@, keep@, input@.len() as int); }
         return input;
     }
     if count < input.len() / 128 {
         // Below one match per 128 bytes, copying the runs between matches
         // beats `process_delete`.
         let mut start = 0;
-        for pos in memchr::memchr_iter(delete_char, input) {
+        #[cfg(not(verus_keep_ghost))]
+        let mut search = memchr::memchr_iter(delete_char, input);
+        #[cfg(verus_keep_ghost)]
+        let mut search = crate::trusted::search_new(delete_char, input);
+        #[cfg_attr(verus_keep_ghost, verus_spec(
+            invariant start <= input.len(),
+                forall|b: int| 0 <= b < 256 ==> keep@[b] == (b != delete_char as int),
+                crate::trusted::search(search).bytes == input@,
+                crate::trusted::search(search).byte == delete_char,
+                output@ == reference_prefix(input@, keep@, start as int),
+            invariant_except_break crate::trusted::search(search).position == start,
+            ensures forall|i: int| start <= i < input.len() ==> input@[i] != delete_char,
+            decreases input.len() - start,
+        ))]
+        loop {
+            #[cfg(not(verus_keep_ghost))]
+            let next = search.next();
+            #[cfg(verus_keep_ghost)]
+            let next = crate::trusted::search_next(&mut search);
+            let pos = match next { Some(pos) => pos, None => break };
             output.extend_from_slice(&input[start..pos]);
+            #[cfg(verus_keep_ghost)]
+            proof! {
+                let part = input@.subrange(start as int, pos as int);
+                crate::proof::kept_range(input@, keep@, delete_char, start as int, pos as int);
+                crate::proof::append_prefix(input@.take(start as int), part, keep@, part.len() as int);
+                assert(input@.take(pos as int) =~= input@.take(start as int) + part);
+                assert(input@.take(start as int).take(start as int) =~= input@.take(start as int));
+                assert(input@.take(pos as int).take(pos as int) =~= input@.take(pos as int));
+                crate::proof::same_prefix(input@, input@.take(start as int), keep@, start as int);
+                crate::proof::same_prefix(input@, input@.take(pos as int), keep@, pos as int);
+                reference_step(input@, keep@, pos as int);
+            }
             start = pos + 1;
         }
         output.extend_from_slice(&input[start..]);
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            let part = input@.skip(start as int);
+            assert(part =~= input@.subrange(start as int, input.len() as int));
+            crate::proof::kept_range(input@, keep@, delete_char, start as int, input.len() as int);
+            crate::proof::append_prefix(input@.take(start as int), part, keep@, part.len() as int);
+            assert(input@ =~= input@.take(start as int) + part);
+            assert(input@.take(start as int).take(start as int) =~= input@.take(start as int));
+            crate::proof::same_prefix(input@, input@.take(start as int), keep@, start as int);
+        }
     } else if count < input.len() {
         process_delete(input, output, keep);
+    } else {
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof::removed_prefix(input@, keep@, input@.len() as int); }
     }
     // If count == input.len(), all deleted, output nothing
     output
@@ -256,7 +303,13 @@ pub fn process_delete(input: &[u8], output: &mut Vec<u8>, keep: &[bool; 256]) {
 }
 
 /// Unified I/O processing for all operations
-#[cfg(not(verus_keep_ghost))]
+#[cfg(any(not(verus_keep_ghost), uutils_tr_delete, uutils_tr_translate))]
+#[cfg_attr(verus_keep_ghost, verus_spec(result =>
+    requires io_trusted::readable(old(input)), io_trusted::writable(old(output)), processor.chunk_valid(),
+    ensures result is Ok, io_trusted::remaining(final(input)).len() == 0,
+        io_trusted::written(final(output)) == io_trusted::written(old(output))
+            + processor.chunk_output(io_trusted::remaining(old(input))),
+))]
 pub fn process_input<R, W, P>(input: &mut R, output: &mut W, processor: &P) -> UResult<()>
 where
     R: BufRead,
@@ -267,12 +320,31 @@ where
     let mut buf = [0; BUFFER_SIZE];
     let mut output_buf = Vec::with_capacity(BUFFER_SIZE);
 
+    #[cfg(verus_keep_ghost)]
+    proof_decl! {
+        let ghost bytes = io_trusted::remaining(input);
+        let ghost before = io_trusted::written(output);
+        let ghost consumed: Seq<u8> = Seq::empty();
+    }
+    #[cfg(verus_keep_ghost)]
+    proof! { processor.chunk_append(Seq::empty(), Seq::empty()); }
+    #[cfg_attr(verus_keep_ghost, verus_spec(
+        invariant io_trusted::readable(input), io_trusted::writable(output), processor.chunk_valid(),
+            bytes == consumed + io_trusted::remaining(input),
+            io_trusted::written(output) == before + processor.chunk_output(consumed),
+        ensures consumed == bytes,
+        decreases io_trusted::remaining(input).len(),
+    ))]
     loop {
-        let length = match input.read(&mut buf[..]) {
+        let length = match io_trusted::read(input, &mut buf[..]) {
             Ok(0) => break,
             Ok(len) => len,
+            #[cfg(not(verus_keep_ghost))]
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            #[cfg(not(verus_keep_ghost))]
             Err(e) => return Err(e.map_err_context(|| translate!("tr-error-read-error"))),
+            #[cfg(verus_keep_ghost)]
+            Err(e) => return Err(e),
         };
 
         output_buf.clear();
@@ -280,6 +352,13 @@ where
 
         if !processed.is_empty() {
             write_output(output, processed)?;
+        }
+        #[cfg(verus_keep_ghost)]
+        proof! {
+            let part = buf@.take(length as int);
+            processor.chunk_append(consumed, part);
+            consumed = consumed + part;
+            assert(bytes =~= consumed + io_trusted::remaining(input));
         }
     }
 
@@ -292,6 +371,8 @@ where
 #[inline(never)]
 #[cfg(any(
     not(verus_keep_ghost),
+    uutils_tr_delete,
+    uutils_tr_translate,
     uutils_tr_squeeze,
     uutils_tr_delete_and_squeeze,
     uutils_tr_translate_and_squeeze

@@ -120,7 +120,11 @@ pub fn uu_app() -> Command {
         final(world).names() == old(world).names(),
         final(world).ending() == old(world).ending(),
         final(world).session() == old(world).session(),
-        final(world).output() == paste_proof::expected(filenames@, *delimiters, line_ending, serial),
+        final(world).output() == paste_proof::expected(paste_proof::environment(old(world).session()), filenames@, *delimiters, line_ending, serial),
+        paste_proof::flat(final(world).records()[0]) ==
+            if paste_proof::opened(filenames@) && paste_proof::parsed(*delimiters) is Some
+                && paste_proof::uses_stdin(filenames@) { Seq::<u8>::empty() }
+            else { paste_proof::flat(old(world).records()[0]) },
 ))]
 pub(crate) fn paste(
     filenames: Vec<OsString>,
@@ -132,7 +136,8 @@ pub(crate) fn paste(
     proof_decl! {
         let ghost names = filenames@;
         let ghost session = world.session();
-        let ghost target = paste_proof::expected(names, *delimiters, line_ending, serial);
+        let ghost initial_stdin = world.records()[0];
+        let ghost target = paste_proof::expected(paste_proof::environment(session), names, *delimiters, line_ending, serial);
     }
     let unescaped_and_encoded_delimiters = parse_delimiters(delimiters)?;
     #[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&*world)))]
@@ -146,6 +151,11 @@ pub(crate) fn paste(
     if !serial && input_source_vec_len == 1 {
         #[cfg(verus_keep_ghost)]
         proof! {
+            paste_proof::stdin_id(names, 0);
+            if paste_proof::uses_stdin(names) {
+                let j = paste_proof::stdin_witness(names);
+                assert(j == 0);
+            }
             paste_proof::total_component(world.records(), paste_proof::ids(names)[0], world.records().len() as int);
             paste_proof::single_column(world.records(), paste_proof::ids(names), paste_proof::delimiters(unescaped_and_encoded_delimiters@),
                 line_ending_byte, paste_proof::total(world.records(), world.records().len() as int) as int + 1);
@@ -177,6 +187,8 @@ pub(crate) fn paste(
             invariant
                 serial, world.valid(), world.names() == names, world.ending() == line_ending_byte,
                 world.session() == session, paste_proof::writer_session(&stdout) == session,
+                !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
+                forall|j: int| 0 <= j < i ==> world.records()[paste_proof::ids(names)[j]].len() == 0,
                 line_ending_byte_array_ref@ == seq![line_ending_byte],
                 input_source_vec_len == names.len(), input_source_vec.len() == input_source_vec_len,
                 paste_proof::source_ids(input_source_vec@) == paste_proof::ids(names),
@@ -196,6 +208,7 @@ pub(crate) fn paste(
                 let ghost prefix = world.output();
                 let ghost mut position = 0int;
                 paste_proof::record_bound(records, line_ending_byte);
+                paste_proof::stdin_id(names, i as int);
                 assert(id == paste_proof::ids(names)[i as int]);
                 assert(pool.update(id, records.skip(0)) =~= pool);
             }
@@ -204,6 +217,8 @@ pub(crate) fn paste(
                 invariant
                     world.valid(), world.names() == names, world.ending() == line_ending_byte,
                     world.session() == session, paste_proof::writer_session(&stdout) == session,
+                    !paste_proof::uses_stdin(names) ==> id != 0 && pool[0] == initial_stdin,
+                    forall|j: int| 0 <= j < i ==> pool[paste_proof::ids(names)[j]].len() == 0,
                     paste_proof::source_session(*input_source) == session,
                     line_ending_byte_array_ref@ == seq![line_ending_byte],
                     world.output() == prefix, paste_proof::source_id(*input_source) == id,
@@ -241,6 +256,10 @@ pub(crate) fn paste(
             proof! {
                 assert(position == records.len());
                 assert(world.records() =~= pool.update(id, Seq::<Seq<u8>>::empty()));
+                assert forall|j: int| 0 <= j <= i implies
+                    world.records()[paste_proof::ids(names)[j]].len() == 0 by {
+                    if j < i { assert(pool[paste_proof::ids(names)[j]].len() == 0); }
+                }
                 assert(prefix + paste_proof::serial_output(pool, paste_proof::ids(names),
                     paste_proof::delimiters(unescaped_and_encoded_delimiters@), line_ending_byte, i as int) == target);
                 paste_trusted::proof::serial_buffers_match(paste_proof::lines(records, line_ending_byte),
@@ -291,6 +310,7 @@ pub(crate) fn paste(
             invariant !serial,
                 world.valid(), world.names() == names, world.ending() == line_ending_byte,
                 world.session() == session, paste_proof::writer_session(&stdout) == session,
+                !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
                 input_source_vec_len == input_source_vec.len(), input_source_vec_len == names.len(),
                 paste_proof::source_ids(input_source_vec@) == paste_proof::ids(names),
                 forall|j: int| 0 <= j < input_source_vec.len() ==> paste_proof::source_session(#[trigger] input_source_vec@[j]) == session,
@@ -304,6 +324,8 @@ pub(crate) fn paste(
                 paste_proof::delimiters(unescaped_and_encoded_delimiters@), line_ending_byte, fuel) == target,
             ensures world.output() == target, world.valid(), world.names() == names, world.ending() == line_ending_byte,
                 world.session() == session,
+                !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
+                forall|j: int| 0 <= j < names.len() ==> world.records()[paste_proof::ids(names)[j]].len() == 0,
             decreases fuel,
         ))]
         loop {
@@ -317,6 +339,7 @@ pub(crate) fn paste(
                 invariant !serial,
                     world.valid(), world.names() == names, world.ending() == line_ending_byte, world.output() == prefix,
                     world.session() == session, paste_proof::writer_session(&stdout) == session,
+                    !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
                     input_source_vec_len == input_source_vec.len(), input_source_vec_len == names.len(),
                     paste_proof::source_ids(input_source_vec@) == paste_proof::ids(names),
                     forall|j: int| 0 <= j < input_source_vec.len() ==> paste_proof::source_session(#[trigger] input_source_vec@[j]) == session,
@@ -330,6 +353,7 @@ pub(crate) fn paste(
                         paste_proof::row_step(pool, paste_proof::ids(names), line_ending_byte, i as int).1),
                         paste_proof::delimiters(unescaped_and_encoded_delimiters@), i as int),
                     eof_count == paste_proof::none_count(paste_proof::row_step(pool, paste_proof::ids(names), line_ending_byte, i as int).1, i as int),
+                    forall|j: int| 0 <= j < i && paste_proof::row_step(pool, paste_proof::ids(names), line_ending_byte, i as int).1[j] is None ==> eof@[j],
                     0 <= eof_count <= i,
                     delimiter_state.matches(paste_proof::delimiters(unescaped_and_encoded_delimiters@), i as int),
                     i > 0 ==> delimiter_state.trailing_len() == paste_trusted::proof::delimiter_at(
@@ -349,6 +373,7 @@ pub(crate) fn paste(
                     paste_proof::row_next(pool, paste_proof::ids(names), line_ending_byte, i as int);
                     paste_proof::row_length(pool, paste_proof::ids(names), line_ending_byte, i as int);
                     assert(id == paste_proof::ids(names)[i as int]);
+                    paste_proof::stdin_id(names, i as int);
                 }
                 if eof[i] {
                     eof_count += 1;
@@ -386,6 +411,9 @@ pub(crate) fn paste(
                         world.records()[paste_proof::ids(names)[j]].len() == 0 by {
                         if j != i as int { assert(prior_eof[j]); }
                     }
+                    assert forall|j: int| 0 <= j <= i && before.1.push(next)[j] is None implies eof@[j] by {
+                        if j < i { assert(prior_eof[j]); }
+                    }
                 }
             }
 
@@ -397,7 +425,14 @@ pub(crate) fn paste(
 
             if eof_count == input_source_vec_len {
                 #[cfg(verus_keep_ghost)]
-                proof! { assert(world.output() == target); }
+                proof! {
+                    assert(world.output() == target);
+                    assert forall|j: int| 0 <= j < names.len() implies
+                        world.records()[paste_proof::ids(names)[j]].len() == 0 by {
+                        assert(row[j] is None);
+                        assert(eof@[j]);
+                    }
+                }
                 break;
             }
 
@@ -429,6 +464,14 @@ pub(crate) fn paste(
         }
     }
 
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        if paste_proof::uses_stdin(names) {
+            let j = paste_proof::stdin_witness(names);
+            assert(paste_proof::ids(names)[j] == 0);
+            assert(world.records()[0].len() == 0);
+        }
+    }
     Ok(())
 }
 
@@ -513,6 +556,7 @@ pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>>
         final(world).names() == old(world).names(), final(world).ending() == old(world).ending(),
         final(world).session() == old(world).session(),
         paste_proof::writer_session(final(writer)) == paste_proof::writer_session(old(writer)),
+        final(world).records() == old(world).records().update(paste_proof::source_id(input_source), Seq::<Seq<u8>>::empty()),
         final(world).output() == old(world).output() + paste_proof::normalized(
             paste_proof::flat(old(world).records()[paste_proof::source_id(input_source)]), line_ending_byte),
 ))]
@@ -526,6 +570,7 @@ fn write_single_input_source(
         let ghost names = world.names();
         let ghost session = world.session();
         let ghost id = paste_proof::source_id(input_source);
+        let ghost initial_pool = world.records();
         let ghost bytes = paste_proof::flat(world.records()[id]);
         let ghost prefix = world.output();
         let ghost mut consumed = 0int;
@@ -540,6 +585,8 @@ fn write_single_input_source(
             world.session() == session, paste_proof::writer_session(writer) == session,
             paste_proof::source_session(input_source) == session,
             0 <= id < world.records().len(), paste_proof::source_id(input_source) == id,
+            forall|j: int| 0 <= j < world.records().len() && j != id ==>
+                world.records()[j] == initial_pool[j],
             0 <= consumed <= bytes.len(),
             paste_proof::flat(world.records()[id]) == bytes.skip(consumed),
             world.output() == prefix + bytes.take(consumed),
@@ -574,6 +621,11 @@ fn write_single_input_source(
         paste_trusted::write_all(writer, &[line_ending_byte])?;
     }
 
+    #[cfg(verus_keep_ghost)]
+    proof! {
+        paste_proof::record_bound(world.records()[id], line_ending_byte);
+        assert(world.records() =~= initial_pool.update(id, Seq::<Seq<u8>>::empty()));
+    }
     Ok(())
 }
 
