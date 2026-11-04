@@ -935,9 +935,10 @@ impl<'a> Line<'a> {
     #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-        requires !settings.debug,
+        requires old(log).valid(), !settings.debug,
             crate::trusted::writer_session(old(writer)) == old(log).session(),
         ensures result is Ok, final(log).session() == old(log).session(),
+            final(log).valid(), final(log).origin() == old(log).origin(),
             crate::trusted::writer_session(final(writer)) == final(log).session(),
             final(log).bytes() == old(log).bytes() + self.line@
                 + seq![crate::trusted::ending_byte(settings.line_ending)],
@@ -4197,12 +4198,13 @@ fn month_compare(a: &[u8], b: &[u8]) -> Ordering {
 #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires !settings.debug,
+    requires old(log).valid(), old(log).bytes().len() == 0, !settings.debug,
         crate::trusted::output_session(output) == old(log).session(),
         vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&iter),
         vstd::std_specs::iter::IteratorSpec::will_return_none(&iter),
         vstd::std_specs::iter::IteratorSpec::decrease(&iter) is Some,
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+    ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
         final(log).bytes() == crate::proof::sorting::emit(
             crate::proof::sorting::native_lines(vstd::std_specs::iter::IteratorSpec::remaining(&iter)),
             crate::trusted::ending_byte(settings.line_ending)),
@@ -4231,7 +4233,7 @@ fn print_sorted<'a, T: Iterator<Item = &'a Line<'a>>>(
             vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&state.iter),
             vstd::std_specs::iter::IteratorSpec::will_return_none(&state.iter),
             vstd::std_specs::iter::IteratorSpec::decrease(&state.iter) is Some,
-            log.session() == session,
+            log.session() == session, log.valid(), log.origin() == old(log).origin(),
             crate::trusted::writer_session(&writer) == log.session(),
             log.bytes() == crate::proof::sorting::emit(
                 crate::proof::sorting::native_lines(state.seq().take(state.index())),

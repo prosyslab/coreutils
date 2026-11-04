@@ -203,11 +203,13 @@ pub(crate) fn reopen_files<C: ClosedTmpFile + 'static>(files: Vec<C>)
 #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_spec(result =>
     with Ghost(context): Ghost<crate::proof::merging::MergeContext>,
         Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires Tmp::supported(), files.obeys_prophetic_iter_laws(), files.will_return_none(), files.decrease() is Some,
+    requires old(log).valid(), old(log).bytes().len() == 0,
+        Tmp::supported(), files.obeys_prophetic_iter_laws(), files.will_return_none(), files.decrease() is Some,
         crate::proof::merging::inputs_valid(files.remaining(), settings),
         context.files == crate::proof::merging::input_rows(files.remaining(), settings),
         old(log).session() == crate::trusted::output_session(output),
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+    ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
         final(log).bytes() == crate::proof::merging::output(context.files, settings),
     decreases context.files.len(),
 ))]
@@ -1093,11 +1095,12 @@ pub(crate) struct FileMerger<'a> {
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires crate::proof::merging::file_valid(file, settings),
+    requires old(log).valid(), crate::proof::merging::file_valid(file, settings),
         *contents == crate::trusted::ownership::contents(&*file.current_chunk),
         match previous { None => true, Some(previous) => crate::proof::merging::previous_valid(previous, settings) },
         crate::trusted::writer_session(old(writer)) == old(log).session(),
     ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(),
         crate::trusted::writer_session(final(writer)) == final(log).session(),
         final(log).bytes() == old(log).bytes() + crate::proof::merging::output_delta(file, previous, settings),
 ))]
@@ -1168,9 +1171,11 @@ impl FileMerger<'_> {
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
             Tracked(init): Tracked<crate::proof::merging::StreamInit>,
-        requires crate::proof::merging::stream_ready(&self, &init, settings),
+        requires old(log).valid(), old(log).bytes().len() == 0,
+            crate::proof::merging::stream_ready(&self, &init, settings),
             old(log).session() == crate::trusted::output_session(output),
-        ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+        ensures result is Ok, final(log).session() == old(log).session(),
+            final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
             final(log).bytes() == crate::proof::merging::output(init.context.files, settings),
     ))]
     fn write_all(self, settings: &GlobalSettings, output: Output) -> UResult<()> {
@@ -1203,9 +1208,11 @@ impl FileMerger<'_> {
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
             Tracked(init): Tracked<crate::proof::merging::StreamInit>,
-        requires crate::proof::merging::stream_ready(&self, &init, settings),
+        requires old(log).valid(), crate::proof::merging::stream_ready(&self, &init, settings),
             crate::trusted::writer_session(old(out)) == old(log).session(),
-        ensures result is Ok, final(log).session() == old(log).session(), crate::trusted::writer_session(final(out)) == final(log).session(),
+        ensures result is Ok, final(log).session() == old(log).session(),
+            final(log).valid(), final(log).origin() == old(log).origin(),
+            crate::trusted::writer_session(final(out)) == final(log).session(),
             final(log).bytes() == old(log).bytes() + crate::proof::merging::output(init.context.files, settings),
     ))]
     fn write_all_to(
@@ -1234,6 +1241,7 @@ impl FileMerger<'_> {
             invariant crate::proof::merging::stream_session(&this, &init, settings), init.context == context_value,
                 *context == context_value, init.reader == reader_identity, init.completion == completion_identity,
                 log.session() == session, crate::trusted::writer_session(out) == session,
+                log.valid(), log.origin() == old(log).origin(),
                 write_result is Ok,
                 init.reader.success() ==> log.bytes() == prefix + crate::proof::merging::emitted(context,
                     &crate::proof::merging::progress_view(&init.progress), settings),
@@ -1321,7 +1329,7 @@ impl FileMerger<'_> {
         with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
             Tracked(init): Tracked<&mut crate::proof::merging::StreamInit>,
             Ghost(prefix): Ghost<vstd::seq::Seq<u8>>,
-        requires crate::proof::merging::stream_session(old(self), old(init), settings),
+        requires old(log).valid(), crate::proof::merging::stream_session(old(self), old(init), settings),
             crate::trusted::writer_session(old(writer)) == old(log).session(),
             old(init).reader.success() ==> old(log).bytes() == prefix
                 + crate::proof::merging::emitted(&old(init).context, &crate::proof::merging::progress_view(&old(init).progress), settings),
@@ -1335,6 +1343,7 @@ impl FileMerger<'_> {
             final(init).progress.remaining == if crate::trusted::merging::heap_values(&old(self).heap).len() > 0 {
                 old(init).progress.remaining - 1 } else { old(init).progress.remaining as int },
             final(log).session() == old(log).session(),
+            final(log).valid(), final(log).origin() == old(log).origin(),
             crate::trusted::writer_session(final(writer)) == final(log).session(),
             final(init).reader.success() ==> final(log).bytes() == prefix
                 + crate::proof::merging::emitted(&final(init).context, &crate::proof::merging::progress_view(&final(init).progress), settings),

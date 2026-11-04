@@ -305,10 +305,15 @@ pub fn process_delete(input: &[u8], output: &mut Vec<u8>, keep: &[bool; 256]) {
 /// Unified I/O processing for all operations
 #[cfg(any(not(verus_keep_ghost), uutils_tr_delete, uutils_tr_translate))]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires io_trusted::readable(old(input)), io_trusted::writable(old(output)), processor.chunk_valid(),
-    ensures result is Ok, io_trusted::remaining(final(input)).len() == 0,
-        io_trusted::written(final(output)) == io_trusted::written(old(output))
-            + processor.chunk_output(io_trusted::remaining(old(input))),
+    with state: &mut Ghost<crate::proof_common::State>,
+    requires old(state)@.valid(),
+        io_trusted::observes(old(state)@, old(input), old(output)), processor.chunk_valid(),
+    ensures result is Ok, final(state)@.valid(),
+        io_trusted::observes(final(state)@, final(input), final(output)),
+        crate::trusted_common::fd::frame(old(state)@, final(state)@),
+        final(state)@.remaining(0).len() == 0,
+        final(state)@.output() == old(state)@.output()
+            + processor.chunk_output(old(state)@.remaining(0)),
 ))]
 pub fn process_input<R, W, P>(input: &mut R, output: &mut W, processor: &P) -> UResult<()>
 where
@@ -322,21 +327,29 @@ where
 
     #[cfg(verus_keep_ghost)]
     proof_decl! {
-        let ghost bytes = io_trusted::remaining(input);
-        let ghost before = io_trusted::written(output);
+        let ghost origin = state@;
+        let ghost bytes = state@.remaining(0);
+        let ghost before = state@.output();
         let ghost consumed: Seq<u8> = Seq::empty();
     }
     #[cfg(verus_keep_ghost)]
     proof! { processor.chunk_append(Seq::empty(), Seq::empty()); }
     #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant io_trusted::readable(input), io_trusted::writable(output), processor.chunk_valid(),
-            bytes == consumed + io_trusted::remaining(input),
-            io_trusted::written(output) == before + processor.chunk_output(consumed),
+        invariant state@.valid(), io_trusted::observes(state@, input, output), processor.chunk_valid(),
+            crate::trusted_common::fd::frame(origin, state@),
+            bytes == consumed + state@.remaining(0),
+            state@.output() == before + processor.chunk_output(consumed),
         ensures consumed == bytes,
-        decreases io_trusted::remaining(input).len(),
+        decreases state@.remaining(0).len(),
     ))]
     loop {
-        let length = match io_trusted::read(input, &mut buf[..]) {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! { let ghost read_start = state@; }
+        #[cfg_attr(verus_keep_ghost, verus_spec(with &mut *state))]
+        let read_result = io_trusted::read_state(input, &mut buf[..]);
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof_common::frame_transitive(origin, read_start, state@); }
+        let length = match read_result {
             Ok(0) => break,
             Ok(len) => len,
             #[cfg(not(verus_keep_ghost))]
@@ -351,14 +364,20 @@ where
         let processed = processor.process_chunk(&buf[..length], &mut output_buf);
 
         if !processed.is_empty() {
-            write_output(output, processed)?;
+            #[cfg(verus_keep_ghost)]
+            proof_decl! { let ghost write_start = state@; }
+            #[cfg_attr(verus_keep_ghost, verus_spec(with &mut *state))]
+            let status = write_output(output, processed);
+            status?;
+            #[cfg(verus_keep_ghost)]
+            proof! { crate::proof_common::frame_transitive(origin, write_start, state@); }
         }
         #[cfg(verus_keep_ghost)]
         proof! {
             let part = buf@.take(length as int);
             processor.chunk_append(consumed, part);
             consumed = consumed + part;
-            assert(bytes =~= consumed + io_trusted::remaining(input));
+            assert(bytes =~= consumed + state@.remaining(0));
         }
     }
 
@@ -378,13 +397,21 @@ where
     uutils_tr_translate_and_squeeze
 ))]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires io_trusted::writable(old(output)),
-    ensures result is Ok, io_trusted::writable(final(output)),
-        io_trusted::written(final(output)) == io_trusted::written(old(output)) + buf@,
+    with state: &mut Ghost<crate::proof_common::State>,
+    requires old(state)@.valid(), io_trusted::writable(old(output)),
+        io_trusted::written(old(output)) == old(state)@.output(),
+    ensures result is Ok, final(state)@.valid(), io_trusted::writable(final(output)),
+        io_trusted::written(final(output)) == final(state)@.output(),
+        final(state)@ == old(state)@.append(1, buf@),
+        crate::trusted_common::fd::frame(old(state)@, final(state)@),
 ))]
 pub fn write_output<W: Write>(output: &mut W, buf: &[u8]) -> UResult<()> {
     #[cfg(verus_keep_ghost)]
-    return io_trusted::write_all(output, buf);
+    {
+        #[verus_spec(with &mut *state)]
+        let status = io_trusted::write_state(output, buf);
+        return status;
+    }
 
     #[cfg(not(verus_keep_ghost))]
     #[cfg(not(windows))]

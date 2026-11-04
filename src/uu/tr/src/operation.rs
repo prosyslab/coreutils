@@ -1131,12 +1131,16 @@ impl SymbolTranslator for SqueezeOperation {
     uutils_tr_translate_and_squeeze
 ))]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires translator.valid(), io_trusted::readable(old(input)), io_trusted::writable(old(output)),
-    ensures result is Ok,
-        io_trusted::remaining(final(input)).len() == 0,
-        io_trusted::written(final(output)) == io_trusted::written(old(output)) +
-            stream_proof::run(translator, io_trusted::remaining(old(input)),
-                io_trusted::remaining(old(input)).len() as int).0,
+    with state: &mut Ghost<crate::proof_common::State>,
+    requires translator.valid(), old(state)@.valid(),
+        io_trusted::observes(old(state)@, old(input), old(output)),
+    ensures result is Ok, final(state)@.valid(),
+        io_trusted::observes(final(state)@, final(input), final(output)),
+        crate::trusted_common::fd::frame(old(state)@, final(state)@),
+        final(state)@.remaining(0).len() == 0,
+        final(state)@.output() == old(state)@.output() +
+            stream_proof::run(translator, old(state)@.remaining(0),
+                old(state)@.remaining(0).len() as int).0,
 ))]
 pub fn translate_input<T, R, W>(input: &mut R, output: &mut W, mut translator: T) -> UResult<()>
 where
@@ -1151,29 +1155,37 @@ where
     #[cfg(verus_keep_ghost)]
     proof_decl! {
         let ghost initial = translator;
-        let ghost bytes = io_trusted::remaining(input);
-        let ghost written = io_trusted::written(output);
+        let ghost origin = state@;
+        let ghost bytes = state@.remaining(0);
+        let ghost written = state@.output();
         let ghost offset: int = 0;
     }
     #[cfg_attr(verus_keep_ghost, verus_spec(
         invariant
             0 <= offset <= bytes.len(), translator.valid(),
-            io_trusted::readable(input), io_trusted::writable(output),
-            io_trusted::remaining(input) == bytes.skip(offset),
-            io_trusted::written(output) == written + stream_proof::run(initial, bytes, offset).0,
+            state@.valid(), io_trusted::observes(state@, input, output),
+            crate::trusted_common::fd::frame(origin, state@),
+            state@.remaining(0) == bytes.skip(offset),
+            state@.output() == written + stream_proof::run(initial, bytes, offset).0,
             translator == stream_proof::run(initial, bytes, offset).1,
         ensures
-            io_trusted::remaining(input).len() == 0,
+            state@.remaining(0).len() == 0,
             offset == bytes.len(),
-            io_trusted::written(output) == written + stream_proof::run(initial, bytes, bytes.len() as int).0,
+            state@.output() == written + stream_proof::run(initial, bytes, bytes.len() as int).0,
         decreases bytes.len() - offset,
     ))]
     loop {
-        let length = match io_trusted::read(input, &mut buf[..]) {
+        #[cfg(verus_keep_ghost)]
+        proof_decl! { let ghost read_start = state@; }
+        #[cfg_attr(verus_keep_ghost, verus_spec(with &mut *state))]
+        let read_result = io_trusted::read_state(input, &mut buf[..]);
+        #[cfg(verus_keep_ghost)]
+        proof! { crate::proof_common::frame_transitive(origin, read_start, state@); }
+        let length = match read_result {
             Ok(0) => {
                 #[cfg(verus_keep_ghost)]
                 proof! {
-                    assert(io_trusted::remaining(input).len() == 0);
+                    assert(state@.remaining(0).len() == 0);
                     assert(offset == bytes.len());
                 }
                 break; // EOF reached
@@ -1217,7 +1229,13 @@ where
         }
 
         if !output_buf.is_empty() {
-            crate::simd::write_output(output, &output_buf)?;
+            #[cfg(verus_keep_ghost)]
+            proof_decl! { let ghost write_start = state@; }
+            #[cfg_attr(verus_keep_ghost, verus_spec(with &mut *state))]
+            let status = crate::simd::write_output(output, &output_buf);
+            status?;
+            #[cfg(verus_keep_ghost)]
+            proof! { crate::proof_common::frame_transitive(origin, write_start, state@); }
         }
         #[cfg(verus_keep_ghost)]
         proof! { offset = offset + length; }
@@ -1225,9 +1243,9 @@ where
 
     #[cfg(verus_keep_ghost)]
     proof! {
-        assert(io_trusted::remaining(input).len() == 0);
+        assert(state@.remaining(0).len() == 0);
         assert(offset == bytes.len());
-        assert(io_trusted::written(output) == written + stream_proof::run(initial, bytes, bytes.len() as int).0);
+        assert(state@.output() == written + stream_proof::run(initial, bytes, bytes.len() as int).0);
     }
     Ok(())
 }

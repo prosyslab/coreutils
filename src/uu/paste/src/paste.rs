@@ -115,8 +115,10 @@ pub fn uu_app() -> Command {
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(world): Tracked<&mut World>,
-    requires old(world).start(filenames@, line_ending),
-    ensures final(world).valid(),
+    requires old(world).start(filenames@, line_ending), old(world).io_matches(),
+        paste_proof::opened(filenames@), old(world).state().fd_table.dom() == set![0int, 1int],
+    ensures final(world).valid(), final(world).io_matches(),
+        final(world).state().fd_table.dom() == set![0int, 1int],
         final(world).names() == old(world).names(),
         final(world).ending() == old(world).ending(),
         final(world).session() == old(world).session(),
@@ -140,7 +142,7 @@ pub(crate) fn paste(
         let ghost target = paste_proof::expected(paste_proof::environment(session), names, *delimiters, line_ending, serial);
     }
     let unescaped_and_encoded_delimiters = parse_delimiters(delimiters)?;
-    #[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&*world)))]
+    #[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut *world)))]
     let mut input_source_vec = open_inputs(filenames)?;
 
     let line_ending_byte = u8::from(line_ending);
@@ -152,6 +154,7 @@ pub(crate) fn paste(
         #[cfg(verus_keep_ghost)]
         proof! {
             paste_proof::stdin_id(names, 0);
+            paste_proof::fds_step(names, 0); paste_proof::fds_empty(names);
             if paste_proof::uses_stdin(names) {
                 let j = paste_proof::stdin_witness(names);
                 assert(j == 0);
@@ -185,7 +188,9 @@ pub(crate) fn paste(
     if serial {
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant
-                serial, world.valid(), world.names() == names, world.ending() == line_ending_byte,
+                serial, world.valid(), world.io_matches(),
+                world.state().fd_table.dom() == paste_proof::open_fds(names, names.len() as int),
+                world.names() == names, world.ending() == line_ending_byte,
                 world.session() == session, paste_proof::writer_session(&stdout) == session,
                 !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
                 forall|j: int| 0 <= j < i ==> world.records()[paste_proof::ids(names)[j]].len() == 0,
@@ -209,19 +214,23 @@ pub(crate) fn paste(
                 let ghost mut position = 0int;
                 paste_proof::record_bound(records, line_ending_byte);
                 paste_proof::stdin_id(names, i as int);
+                paste_proof::fd_present(names, i as int);
                 assert(id == paste_proof::ids(names)[i as int]);
                 assert(pool.update(id, records.skip(0)) =~= pool);
             }
 
             #[cfg_attr(verus_keep_ghost, verus_spec(
                 invariant
-                    world.valid(), world.names() == names, world.ending() == line_ending_byte,
+                    world.valid(), world.io_matches(),
+                    world.state().fd_table.dom() == paste_proof::open_fds(names, names.len() as int),
+                    world.names() == names, world.ending() == line_ending_byte,
                     world.session() == session, paste_proof::writer_session(&stdout) == session,
                     !paste_proof::uses_stdin(names) ==> id != 0 && pool[0] == initial_stdin,
                     forall|j: int| 0 <= j < i ==> pool[paste_proof::ids(names)[j]].len() == 0,
                     paste_proof::source_session(*input_source) == session,
                     line_ending_byte_array_ref@ == seq![line_ending_byte],
                     world.output() == prefix, paste_proof::source_id(*input_source) == id,
+                    world.state().fd_table.dom().contains(paste_proof::input_fd(id)),
                     0 <= id < pool.len(), records == pool[id], 0 <= position <= records.len(),
                     world.records() == pool.update(id, records.skip(position)),
                     output@ == paste_trusted::proof::buffered_prefix(paste_proof::lines(records, line_ending_byte),
@@ -308,7 +317,9 @@ pub(crate) fn paste(
 
         #[cfg_attr(verus_keep_ghost, verus_spec(
             invariant !serial,
-                world.valid(), world.names() == names, world.ending() == line_ending_byte,
+                world.valid(), world.io_matches(),
+                world.state().fd_table.dom() == paste_proof::open_fds(names, names.len() as int),
+                world.names() == names, world.ending() == line_ending_byte,
                 world.session() == session, paste_proof::writer_session(&stdout) == session,
                 !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
                 input_source_vec_len == input_source_vec.len(), input_source_vec_len == names.len(),
@@ -322,7 +333,9 @@ pub(crate) fn paste(
             invariant_except_break delimiter_state.matches(paste_proof::delimiters(unescaped_and_encoded_delimiters@), 0),
                 world.output() + paste_proof::parallel_output(world.records(), paste_proof::ids(names),
                 paste_proof::delimiters(unescaped_and_encoded_delimiters@), line_ending_byte, fuel) == target,
-            ensures world.output() == target, world.valid(), world.names() == names, world.ending() == line_ending_byte,
+            ensures world.output() == target, world.valid(), world.io_matches(),
+            world.state().fd_table.dom() == paste_proof::open_fds(names, names.len() as int),
+            world.names() == names, world.ending() == line_ending_byte,
                 world.session() == session,
                 !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
                 forall|j: int| 0 <= j < names.len() ==> world.records()[paste_proof::ids(names)[j]].len() == 0,
@@ -337,7 +350,9 @@ pub(crate) fn paste(
 
             #[cfg_attr(verus_keep_ghost, verus_spec(
                 invariant !serial,
-                    world.valid(), world.names() == names, world.ending() == line_ending_byte, world.output() == prefix,
+                    world.valid(), world.io_matches(),
+                    world.state().fd_table.dom() == paste_proof::open_fds(names, names.len() as int),
+                    world.names() == names, world.ending() == line_ending_byte, world.output() == prefix,
                     world.session() == session, paste_proof::writer_session(&stdout) == session,
                     !paste_proof::uses_stdin(names) ==> world.records()[0] == initial_stdin,
                     input_source_vec_len == input_source_vec.len(), input_source_vec_len == names.len(),
@@ -472,18 +487,27 @@ pub(crate) fn paste(
             assert(world.records()[0].len() == 0);
         }
     }
+    #[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut *world)))]
+    paste_trusted::close_inputs(input_source_vec);
     Ok(())
 }
 
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    with Tracked(world): Tracked<&World>,
-    requires world.valid(), world.names() == filenames@,
-    ensures (result is Ok) == paste_proof::opened(filenames@),
+    with Tracked(world): Tracked<&mut World>,
+    requires old(world).valid(), old(world).io_matches(), old(world).names() == filenames@,
+        paste_proof::opened(filenames@), old(world).state().fd_table.dom() == set![0int, 1int],
+        old(world).records() == paste_proof::initial_records(paste_proof::environment(old(world).session()),
+            filenames@, old(world).ending()),
+    ensures final(world).valid(), final(world).io_matches(),
+        paste_proof::same_input(*old(world), *final(world)),
+        final(world).output() == old(world).output(),
+        final(world).state().fd_table.dom() == paste_proof::open_fds(filenames@, filenames.len() as int),
+        (result is Ok) == paste_proof::opened(filenames@),
         result is Ok ==> result->Ok_0.len() == filenames.len()
             && paste_proof::source_ids(result->Ok_0@) == paste_proof::ids(filenames@)
             && forall|j: int| 0 <= j < result->Ok_0.len() ==>
-                paste_proof::source_session(#[trigger] result->Ok_0@[j]) == world.session(),
+                paste_proof::source_session(#[trigger] result->Ok_0@[j]) == final(world).session(),
 ))]
 pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>> {
     #[cfg(not(verus_keep_ghost))]
@@ -492,9 +516,16 @@ pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>>
     #[verus_spec(with => Tracked(mut cache))]
     let stdin_once_cell = paste_trusted::library::new_cache::<Rc<RefCell<Stdin>>>();
     let mut input_source_vec = Vec::with_capacity(filenames.len());
+    #[cfg(verus_keep_ghost)]
+    proof_decl! { let ghost initial_pool = world.records(); paste_proof::fds_empty(filenames@); }
 
     #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant world.valid(), world.names() == filenames@, cache.owns(&stdin_once_cell),
+        invariant world.valid(), world.io_matches(), world.names() == filenames@,
+            world.records() == initial_pool, world.output() == old(world).output(),
+            initial_pool == paste_proof::initial_records(paste_proof::environment(world.session()), filenames@, world.ending()),
+            world.session() == old(world).session(), world.ending() == old(world).ending(),
+            world.state().fd_table.dom() == paste_proof::open_fds(filenames@, _index as int),
+            paste_proof::opened(filenames@), cache.owns(&stdin_once_cell),
             cache.value() is Some ==> paste_trusted::library::session(
                 paste_trusted::library::cell_value(*cache.value()->Some_0)) == world.session(),
             input_source_vec.len() == _index,
@@ -505,6 +536,8 @@ pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>>
                     && paste_proof::source_session(input_source_vec@[j]) == world.session(),
     ))]
     for _index in 0..filenames.len() {
+        #[cfg(verus_keep_ghost)]
+        proof! { paste_proof::fds_step(filenames@, _index as int); }
         let filename = &filenames[_index];
         let input_source = if paste_trusted::filename_is_stdin(&filename) {
             #[cfg(not(verus_keep_ghost))]
@@ -518,7 +551,7 @@ pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>>
                     ensures paste_trusted::library::session(paste_trusted::library::cell_value(*result)) == world.session(),
                 ),
                 || -> Rc<RefCell<Stdin>> {
-                    #[verus_spec(with Tracked(world))]
+                    #[verus_spec(with Tracked(&*world))]
                     let handle = paste_trusted::library::stdin_handle();
                     Rc::new(RefCell::new(handle))
                 });
@@ -531,7 +564,7 @@ pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>>
             #[cfg(not(verus_keep_ghost))]
             let file = paste_trusted::open_file(&filename)?;
             #[cfg(verus_keep_ghost)]
-            #[verus_spec(with Ghost(_index as int), Tracked(world))]
+            #[verus_spec(with Ghost(_index as int), Tracked(&mut *world))]
             let file = paste_trusted::library::open_file(&filename)?;
             #[cfg(not(verus_keep_ghost))]
             let reader = BufReader::new(file);
@@ -548,11 +581,15 @@ pub(crate) fn open_inputs(filenames: Vec<OsString>) -> UResult<Vec<InputSource>>
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(world): Tracked<&mut World>,
-    requires old(world).valid(), old(world).ending() == line_ending_byte,
+    requires old(world).valid(), old(world).io_matches(), old(world).ending() == line_ending_byte,
         paste_proof::writer_session(old(writer)) == old(world).session(),
         paste_proof::source_session(input_source) == old(world).session(),
         0 <= paste_proof::source_id(input_source) < old(world).records().len(),
-    ensures final(world).valid(),
+        old(world).state().fd_table.dom().contains(paste_proof::source_fd(input_source)),
+    ensures final(world).state().fd_table.dom() == if paste_proof::source_id(input_source) == 0 {
+            old(world).state().fd_table.dom()
+        } else { old(world).state().fd_table.dom().remove(paste_proof::source_fd(input_source)) },
+        final(world).valid(), final(world).io_matches(),
         final(world).names() == old(world).names(), final(world).ending() == old(world).ending(),
         final(world).session() == old(world).session(),
         paste_proof::writer_session(final(writer)) == paste_proof::writer_session(old(writer)),
@@ -575,13 +612,18 @@ fn write_single_input_source(
         let ghost prefix = world.output();
         let ghost mut consumed = 0int;
         let ghost mut records = world.records()[id];
+        paste_proof::source_remaining(world, id);
     }
     let mut buffer = [0_u8; 8 * 1024];
     let mut has_data = false;
     let mut last_byte = line_ending_byte;
 
     #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant world.valid(), world.names() == names, world.ending() == line_ending_byte,
+        invariant world.valid(), world.io_matches(),
+            world.state().fd_table.dom().contains(paste_proof::input_fd(id)),
+            world.state().fd_table.dom() == old(world).state().fd_table.dom(),
+            world.state().remaining(paste_proof::input_fd(id)) == paste_proof::flat(world.records()[id]),
+            world.names() == names, world.ending() == line_ending_byte,
             world.session() == session, paste_proof::writer_session(writer) == session,
             paste_proof::source_session(input_source) == session,
             0 <= id < world.records().len(), paste_proof::source_id(input_source) == id,
@@ -593,7 +635,7 @@ fn write_single_input_source(
             has_data == (consumed > 0),
             last_byte == if consumed > 0 { bytes[consumed - 1] } else { line_ending_byte },
         ensures consumed == bytes.len(),
-        decreases bytes.len() - consumed,
+        decreases world.state().remaining(paste_proof::input_fd(id)).len(),
     ))]
     while let bytes_read @ 1.. = {
         #[cfg(verus_keep_ghost)]
@@ -626,6 +668,8 @@ fn write_single_input_source(
         paste_proof::record_bound(world.records()[id], line_ending_byte);
         assert(world.records() =~= initial_pool.update(id, Seq::<Seq<u8>>::empty()));
     }
+    #[cfg_attr(verus_keep_ghost, verus_spec(with Tracked(&mut *world)))]
+    paste_trusted::close_source(input_source);
     Ok(())
 }
 
@@ -973,10 +1017,16 @@ impl InputSource {
     #[cfg_attr(verus_keep_ghost, verus_verify)]
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(world): Tracked<&mut World>,
-        requires old(world).valid(), old(buf).len() > 0,
+        requires old(world).valid(), old(world).io_matches(), old(buf).len() > 0,
             paste_proof::source_session(*old(self)) == old(world).session(),
             0 <= paste_proof::source_id(*old(self)) < old(world).records().len(),
-        ensures result is Ok, final(world).valid(),
+            old(world).state().fd_table.dom().contains(paste_proof::source_fd(*old(self))),
+        ensures final(world).state() == old(world).state().advance(
+                paste_proof::source_fd(*old(self)), result->Ok_0 as nat),
+            final(world).state().fd_table.dom() == old(world).state().fd_table.dom(),
+            result is Ok, final(world).valid(), final(world).io_matches(),
+            final(world).state().remaining(paste_proof::source_fd(*old(self)))
+                == paste_proof::flat(final(world).records()[paste_proof::source_id(*old(self))]),
             paste_proof::source_id(*final(self)) == paste_proof::source_id(*old(self)),
             paste_proof::source_session(*final(self)) == paste_proof::source_session(*old(self)),
             final(world).session() == old(world).session(),
@@ -1030,10 +1080,16 @@ impl InputSource {
     #[cfg_attr(verus_keep_ghost, verus_verify)]
     #[cfg_attr(verus_keep_ghost, verus_spec(result =>
         with Tracked(world): Tracked<&mut World>,
-        requires old(world).valid(), byte == old(world).ending(),
+        requires old(world).valid(), old(world).io_matches(), byte == old(world).ending(),
             paste_proof::source_session(*old(self)) == old(world).session(),
             0 <= paste_proof::source_id(*old(self)) < old(world).records().len(),
-        ensures result is Ok, final(world).valid(),
+            old(world).state().fd_table.dom().contains(paste_proof::source_fd(*old(self))),
+        ensures final(world).state() == old(world).state().advance(
+                paste_proof::source_fd(*old(self)), result->Ok_0 as nat),
+            final(world).state().fd_table.dom() == old(world).state().fd_table.dom(),
+            result is Ok, final(world).valid(), final(world).io_matches(),
+            final(world).state().remaining(paste_proof::source_fd(*old(self)))
+                == paste_proof::flat(final(world).records()[paste_proof::source_id(*old(self))]),
             paste_proof::source_id(*final(self)) == paste_proof::source_id(*old(self)),
             paste_proof::source_session(*final(self)) == paste_proof::source_session(*old(self)),
             final(world).session() == old(world).session(),

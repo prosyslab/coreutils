@@ -123,7 +123,8 @@ verus! {
 /// they are merged back together for final output.
 #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_spec(result =>
     with Ghost(bytes): Ghost<Seq<u8>>, Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires crate::proof::native_settings_valid(settings), crate::trusted::unwind::rayon_ready(),
+    requires old(log).valid(), old(log).bytes().len() == 0,
+        crate::proof::native_settings_valid(settings), crate::trusted::unwind::rayon_ready(),
         old(log).session() == crate::trusted::output_session(output),
         vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(old(files)),
         vstd::std_specs::iter::IteratorSpec::will_return_none(old(files)),
@@ -132,7 +133,8 @@ verus! {
         vstd::std_specs::iter::IteratorSpec::remaining(old(files)).len() > 0,
         bytes == crate::proof::input::file_bytes(vstd::std_specs::iter::IteratorSpec::remaining(old(files)),
             crate::proof::native_ending(settings)),
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+    ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
         final(log).bytes() == crate::proof::upstream_output(bytes, settings),
 ))]
 pub fn ext_sort(
@@ -250,7 +252,8 @@ pub fn ext_sort(
     with Ghost(bytes): Ghost<Seq<u8>>, Tracked(log): Tracked<&mut crate::proof::OutputLog>,
         Tracked(sending): Tracked<&mut crate::trusted::concurrency::SendState<Chunk>>,
         Tracked(receiving): Tracked<&mut crate::trusted::concurrency::RecvState<Chunk>>,
-    requires crate::proof::native_settings_valid(settings), Tmp::supported(),
+    requires old(log).valid(), old(log).bytes().len() == 0,
+        crate::proof::native_settings_valid(settings), Tmp::supported(),
         crate::proof::producer::ready(&sender, receiver, old(sending), old(receiving), settings, bytes.len()),
         vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&files),
         vstd::std_specs::iter::IteratorSpec::will_return_none(&files),
@@ -260,7 +263,8 @@ pub fn ext_sort(
         bytes == crate::proof::input::file_bytes(vstd::std_specs::iter::IteratorSpec::remaining(&files),
             crate::proof::native_ending(settings)),
         old(log).session() == crate::trusted::output_session(output),
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+    ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
         final(log).bytes() == crate::proof::upstream_output(bytes, settings),
 ))]
 fn reader_writer<
@@ -386,9 +390,11 @@ fn reader_writer<
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires crate::proof::native_settings_valid(settings), crate::proof::producer::valid_chunk(chunk, settings),
+    requires old(log).valid(), old(log).bytes().len() == 0,
+        crate::proof::native_settings_valid(settings), crate::proof::producer::valid_chunk(chunk, settings),
         old(log).session() == crate::trusted::output_session(output),
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+    ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
         final(log).bytes() == crate::proof::sorting::emit(crate::proof::sorting::selected_rows(
             crate::proof::producer::rows(chunk), crate::proof::producer::rows(chunk).len() as int,
             settings.unique, crate::proof::sorting::native_compare(settings)), crate::proof::native_ending(settings)),
@@ -443,10 +449,11 @@ fn print_memory_chunk(chunk: &Chunk, settings: &GlobalSettings, output: Output) 
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires crate::proof::native_settings_valid(settings),
+    requires old(log).valid(), old(log).bytes().len() == 0, crate::proof::native_settings_valid(settings),
         crate::proof::producer::valid_chunk(a, settings), crate::proof::producer::valid_chunk(b, settings),
         old(log).session() == crate::trusted::output_session(output),
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
+    ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(), final(log).flushed(),
         final(log).bytes() == crate::proof::sorting::emit(crate::proof::sorting::selected_rows(
             crate::proof::sorting::canonical_lines(crate::proof::producer::rows(a) + crate::proof::producer::rows(b),
                 crate::proof::sorting::native_compare(settings)),
@@ -1028,7 +1035,7 @@ fn read_write_loop<I: WriteableTmpFile>(
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(log): Tracked<crate::proof::OutputLog>,
-    requires I::supported(), compress_prog is None,
+    requires log.valid(), I::supported(), compress_prog is None,
         crate::trusted::temporary::file_session(&file.0) == log.session(),
         crate::trusted::temporary::path_session(&file.1) == log.session(), log.bytes().len() == 0,
     ensures result is Ok, result->Ok_0.valid(), result->Ok_0.bytes()
@@ -1059,8 +1066,9 @@ fn write<I: WriteableTmpFile>(
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 #[cfg_attr(verus_keep_ghost, verus_spec(result =>
     with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires crate::trusted::writer_session(old(writer)) == old(log).session(),
+    requires old(log).valid(), crate::trusted::writer_session(old(writer)) == old(log).session(),
     ensures result is Ok, final(log).session() == old(log).session(),
+        final(log).valid(), final(log).origin() == old(log).origin(),
         crate::trusted::writer_session(final(writer)) == final(log).session(),
         final(log).bytes() == old(log).bytes() + crate::proof::sorting::emit(
             crate::proof::sorting::native_owned(lines@), separator),
@@ -1070,6 +1078,7 @@ fn write_lines<T: Write>(lines: &[Line], writer: &mut T, separator: u8) -> std::
     proof_decl! { let ghost initial = log.bytes(); let ghost session = log.session(); }
     #[cfg_attr(verus_keep_ghost, verus_spec(state =>
         invariant state.seq().unref() == lines@, log.session() == session,
+            log.valid(), log.origin() == old(log).origin(),
             crate::trusted::writer_session(&*writer) == log.session(),
             log.bytes() == initial + crate::proof::sorting::emit(
                 crate::proof::sorting::native_owned(lines@.take(state.index())), separator),
