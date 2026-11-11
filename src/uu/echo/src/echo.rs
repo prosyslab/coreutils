@@ -8,11 +8,21 @@ use clap::{Arg, ArgAction, Command};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{StdoutLock, Write, stdout};
+#[cfg(not(verus_keep_ghost))]
 use uucore::error::UResult;
+#[cfg(verus_keep_ghost)]
+type UResult<T> = std::io::Result<T>;
 use uucore::format::{EscapeSet, FormatChar, OctalParsing, parse_escape_only};
 use uucore::{crate_version, format_usage, os_str_as_bytes};
 
 use uucore::translate;
+
+#[path = "../../../../verification_runtime/stdio.rs"]
+mod io_trusted;
+#[path = "../../../../verification_runtime/echo_library.rs"]
+mod format_trusted;
+#[path = "../../../../verification_runtime/codec_library.rs"]
+mod library;
 
 mod options {
     pub const STRING: &str = "STRING";
@@ -23,7 +33,8 @@ mod options {
 
 /// Options for the echo command.
 #[derive(Debug, Clone, Copy)]
-struct Options {
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
+pub(crate) struct Options {
     /// Whether the output should have a trailing newline.
     ///
     /// True by default. `-n` disables it.
@@ -37,6 +48,7 @@ struct Options {
     pub escape: bool,
 }
 
+#[cfg(not(uutils_echo_all))]
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -46,6 +58,7 @@ impl Default for Options {
     }
 }
 
+#[cfg(not(uutils_echo_all))]
 impl Options {
     fn posixly_correct_default() -> Self {
         Self {
@@ -57,6 +70,7 @@ impl Options {
 
 /// Checks if an argument is a valid echo flag, and if
 /// it is records the changes in [`Options`].
+#[cfg(not(uutils_echo_all))]
 fn is_flag(arg: &OsStr, options: &mut Options) -> bool {
     let arg = arg.as_encoded_bytes();
 
@@ -99,6 +113,7 @@ fn is_flag(arg: &OsStr, options: &mut Options) -> bool {
 ///
 /// - Vector of non-flag arguments.
 /// - [`Options`], describing how the arguments should be interpreted.
+#[cfg(not(uutils_echo_all))]
 fn filter_flags(args: impl Iterator<Item = OsString>) -> (impl Iterator<Item = OsString>, Options) {
     let mut options = Options::default();
     let mut args = args.peekable();
@@ -119,6 +134,7 @@ fn filter_flags(args: impl Iterator<Item = OsString>) -> (impl Iterator<Item = O
     (args, options)
 }
 
+#[cfg(not(uutils_echo_all))]
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // args[0] is the name of the binary.
@@ -182,6 +198,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     Ok(())
 }
 
+#[cfg(not(uutils_echo_all))]
 pub fn uu_app() -> Command {
     // Note: echo is different from the other utils in that it should **not**
     // have `infer_long_args(true)`, because, for example, `--ver` should be
@@ -224,36 +241,39 @@ pub fn uu_app() -> Command {
         )
 }
 
-fn execute(
-    stdout: &mut StdoutLock,
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub(crate) fn execute<W: Write>(
+    stdout: &mut W,
     args: impl Iterator<Item = OsString>,
     options: Options,
 ) -> UResult<()> {
-    for (i, arg) in args.into_iter().enumerate() {
-        let bytes = os_str_as_bytes(&arg)?;
+    for (i, arg) in format_trusted::enumerate(args) {
+        let bytes = library::os_bytes(&arg)?;
 
         // Don't print a space before the first argument
         if i > 0 {
-            stdout.write_all(b" ")?;
+            io_trusted::write_all(stdout, b" ")?;
         }
 
         if options.escape {
-            for item in parse_escape_only(
+            for item in format_trusted::escapes(
                 bytes,
-                OctalParsing::ThreeDigits,
-                EscapeSet::WithoutUnicodeAndQuote,
+                format_trusted::three_digits(),
+                format_trusted::escape_set(),
             ) {
-                if item.write(&mut *stdout)?.is_break() {
+                let (rendered, stop) = format_trusted::render_escape(&item)?;
+                io_trusted::write_all(stdout, &rendered)?;
+                if stop {
                     return Ok(());
                 }
             }
         } else {
-            stdout.write_all(bytes)?;
+            io_trusted::write_all(stdout, bytes)?;
         }
     }
 
     if options.trailing_newline {
-        stdout.write_all(b"\n")?;
+        io_trusted::write_all(stdout, b"\n")?;
     }
 
     Ok(())

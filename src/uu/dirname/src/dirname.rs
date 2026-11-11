@@ -5,7 +5,7 @@
 
 use clap::{Arg, ArgAction, Command};
 use std::ffi::{OsStr, OsString};
-use std::io::{Write as _, stdout};
+use std::io::{Write, stdout};
 #[cfg(unix)]
 use uucore::display::print_verbatim;
 use uucore::error::{UResult, UUsageError};
@@ -14,17 +14,24 @@ use uucore::line_ending::LineEnding;
 
 use uucore::translate;
 
+#[path = "../../../../verification_runtime/stdio.rs"]
+mod io_trusted;
+#[path = "../../../../verification_runtime/path_library.rs"]
+mod library;
+
 mod options {
     pub const ZERO: &str = "zero";
     pub const DIR: &str = "dir";
 }
 
 #[cfg(not(windows))]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn is_sep(b: u8) -> bool {
     std::path::is_separator(b as char)
 }
 
 #[cfg(windows)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn is_sep(b: u8) -> bool {
     // `std::path::is_separator` does not optimize well on Windows. It is essentially
     // `c.is_ascii() && is_sep_byte(c as u8)`, and LLVM does not make the assumption
@@ -33,11 +40,13 @@ fn is_sep(b: u8) -> bool {
 }
 
 #[cfg(not(windows))]
-fn root_prefix_len(_: &OsStr) -> usize {
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+fn root_prefix_len(_path: &OsStr) -> usize {
     0
 }
 
 #[cfg(windows)]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn root_prefix_len(path: &OsStr) -> usize {
     use std::path::{Component, Path};
 
@@ -79,6 +88,7 @@ fn root_prefix_len(path: &OsStr) -> usize {
 /// - GNU: <https://www.gnu.org/software/coreutils/manual/html_node/dirname-invocation.html>
 ///
 /// See issue #8910 and similar fix in basename (#8373, commit c5268a897).
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn dirname_string_manipulation(path: &OsStr) -> &[u8] {
     let path_bytes = uucore::os_str_as_bytes(path).unwrap_or(&[]);
     if path_bytes.is_empty() {
@@ -89,7 +99,7 @@ fn dirname_string_manipulation(path: &OsStr) -> &[u8] {
     let root_len = root_prefix_len(path);
 
     // Step 1: Strip trailing slashes (but not if the entire path is slashes)
-    if bytes[root_len..].iter().copied().all(is_sep) {
+    if library::all(&bytes[root_len..], is_sep) {
         return &bytes[..root_len.max(1)];
     }
 
@@ -98,7 +108,7 @@ fn dirname_string_manipulation(path: &OsStr) -> &[u8] {
     }
 
     // Step 2: Check if it ends with `/.` and strip the `/+.` pattern
-    if bytes.ends_with(b".") && bytes.len() >= 2 && is_sep(bytes[bytes.len() - 2]) {
+    if bytes.last() == Some(&b'.') && bytes.len() >= 2 && is_sep(bytes[bytes.len() - 2]) {
         let dot_pos = bytes.len() - 1;
         // Find where the slashes before the dot start
         let mut slash_start = dot_pos - 1;
@@ -122,7 +132,7 @@ fn dirname_string_manipulation(path: &OsStr) -> &[u8] {
     }
 
     // Step 3: Normal dirname - find last / and remove everything after it
-    if let Some(last_slash_pos) = bytes.iter().copied().rposition(is_sep) {
+    if let Some(last_slash_pos) = library::rposition(bytes, is_sep) {
         // Found a slash, remove everything after it
         let mut result = &bytes[..last_slash_pos];
 
@@ -150,6 +160,7 @@ fn dirname_string_manipulation(path: &OsStr) -> &[u8] {
     b"."
 }
 
+#[cfg(not(uutils_dirname_all))]
 #[uucore::main(no_signals)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uucore::clap_localization::handle_clap_result(uu_app(), args)?;
@@ -189,6 +200,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     Ok(())
 }
 
+#[cfg(not(uutils_dirname_all))]
 pub fn uu_app() -> Command {
     Command::new("dirname")
         .about(translate!("dirname-about"))
@@ -212,4 +224,11 @@ pub fn uu_app() -> Command {
                 .value_hint(clap::ValueHint::AnyPath)
                 .value_parser(clap::value_parser!(OsString)),
         )
+}
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub(crate) fn write_name<W: Write>(path: &OsStr, ending: u8, output: &mut W) -> std::io::Result<()> {
+    let result = dirname_string_manipulation(path);
+    io_trusted::write_all(output, result)?;
+    io_trusted::write_all(output, &[ending])
 }

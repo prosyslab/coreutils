@@ -11,11 +11,20 @@ use std::ffi::OsString;
 use std::io::{Write, stdout};
 use std::path::{PathBuf, is_separator};
 use uucore::display::Quotable;
-use uucore::error::{UResult, UUsageError};
+#[cfg(not(verus_keep_ghost))]
+use uucore::error::UResult;
+use uucore::error::UUsageError;
+#[cfg(verus_keep_ghost)]
+type UResult<T> = std::io::Result<T>;
 use uucore::format_usage;
 use uucore::line_ending::LineEnding;
 
 use uucore::translate;
+
+#[path = "../../../../verification_runtime/stdio.rs"]
+mod io_trusted;
+#[path = "../../../../verification_runtime/codec_library.rs"]
+mod library;
 
 pub mod options {
     pub static MULTIPLE: &str = "multiple";
@@ -24,6 +33,7 @@ pub mod options {
     pub static ZERO: &str = "zero";
 }
 
+#[cfg(not(uutils_basename_all))]
 #[uucore::main(no_signals)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     //
@@ -74,6 +84,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     Ok(())
 }
 
+#[cfg(not(uutils_basename_all))]
 pub fn uu_app() -> Command {
     Command::new("basename")
         .version(uucore::crate_version!())
@@ -116,10 +127,18 @@ pub fn uu_app() -> Command {
         )
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub(crate) fn write_name<W: Write>(path: &OsString, suffix: &OsString, ending: u8, output: &mut W) -> UResult<()> {
+    io_trusted::write_all(output, &basename(path, suffix)?)?;
+    io_trusted::write_all(output, &[ending])?;
+    Ok(())
+}
+
 // We return a Vec<u8>. Returning a seemingly more proper `OsString` would
 // require back and forth conversions as we need a &[u8] for printing anyway.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn basename(fullname: &OsString, suffix: &OsString) -> UResult<Vec<u8>> {
-    let fullname_bytes = uucore::os_str_as_bytes(fullname)?;
+    let fullname_bytes = library::os_bytes(fullname)?;
 
     // Path::components() normalizes a trailing `.` away. Inspect a trimmed view
     // first so `foo/./` yields `.`, while using the original path below keeps
@@ -127,29 +146,28 @@ fn basename(fullname: &OsString, suffix: &OsString) -> UResult<Vec<u8>> {
     let mut path_end = fullname_bytes;
     while path_end
         .last()
-        .is_some_and(|&byte| is_separator(char::from(byte)))
+        .is_some_and(|byte_ref| { let byte = *byte_ref; is_separator(byte as char) })
     {
         path_end = &path_end[..path_end.len() - 1];
     }
     if path_end.len() > 1
-        && path_end.ends_with(b".")
-        && is_separator(char::from(path_end[path_end.len() - 2]))
+        && path_end.last() == Some(&b'.')
+        && is_separator(path_end[path_end.len() - 2] as char)
     {
         return Ok(b".".into());
     }
 
     // Convert to path buffer and get last path component
-    let pb = PathBuf::from(fullname);
+    let pb = library::path_buf(fullname);
 
     pb.components().next_back().map_or(Ok([].into()), |c| {
         let name = c.as_os_str();
-        let name_bytes = uucore::os_str_as_bytes(name)?;
+        let name_bytes = library::os_bytes(name)?;
         if name == suffix {
             Ok(name_bytes.into())
         } else {
-            let suffix_bytes = uucore::os_str_as_bytes(suffix)?;
-            Ok(name_bytes
-                .strip_suffix(suffix_bytes)
+            let suffix_bytes = library::os_bytes(suffix)?;
+            Ok(io_trusted::strip_suffix(name_bytes, suffix_bytes)
                 .unwrap_or(name_bytes)
                 .into())
         }

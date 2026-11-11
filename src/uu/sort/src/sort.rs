@@ -3,13 +3,6 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-// spell-checker:ignore (misc) kKMGTPEZYRQ HFKJFK Mbdfhn getrlimit NOFILE rlim bigdecimal extendedbigdecimal hexdigit behaviour keydef GETFD localeconv foldhash
-// spell-checker:ignore (misc) uppercased qsort getmonth juin juil
-
-// Although these links don't always seem to describe reality, check out the POSIX and GNU specs:
-// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/sort.html
-// https://www.gnu.org/software/coreutils/manual/html_node/sort-invocation.html
-
 mod buffer_hint;
 mod check;
 mod chunks;
@@ -19,7 +12,9 @@ mod ext_sort;
 mod merge;
 mod numeric_str_cmp;
 mod tmp_dir;
-
+use crate::buffer_hint::automatic_buffer_size;
+use crate::proof::unwind::Comparator as UnwindComparator;
+use crate::tmp_dir::TmpDirWrapper;
 use bigdecimal::BigDecimal;
 use chunks::LineData;
 use clap::builder::ValueParser;
@@ -63,90 +58,54 @@ use uucore::translate;
 use uucore::translate_text;
 use uucore::version_cmp::version_cmp;
 use uucore::{format_usage, i18n};
-
-use crate::buffer_hint::automatic_buffer_size;
-use crate::tmp_dir::TmpDirWrapper;
-#[cfg(verus_keep_ghost)]
-use vstd::prelude::*;
-#[cfg(verus_keep_ghost)]
-use crate::proof::unwind::Comparator as UnwindComparator;
-#[cfg(verus_keep_ghost)]
-use crate::proof::comparisons::native as comparison_proof;
-
-#[cfg(not(verus_keep_ghost))]
-type InputReader = Box<dyn Read + Send>;
-#[cfg(verus_keep_ghost)]
 type InputReader = crate::trusted::Reader;
-#[cfg(not(verus_keep_ghost))]
-type SortResult<T> = UResult<T>;
-#[cfg(verus_keep_ghost)]
 type SortResult<T> = Result<T, crate::trusted::IoFailure>;
-
 fn boxed_reader<R: Read + Send + 'static>(reader: R) -> InputReader {
-    #[cfg(not(verus_keep_ghost))]
-    { Box::new(reader) }
-    #[cfg(verus_keep_ghost)]
     { crate::trusted::Reader::new(reader) }
 }
-
 mod options {
     pub mod modes {
-        pub const SORT: &str = "sort";
-
-        pub const HUMAN_NUMERIC: &str = "human-numeric-sort";
-        pub const MONTH: &str = "month-sort";
-        pub const NUMERIC: &str = "numeric-sort";
-        pub const GENERAL_NUMERIC: &str = "general-numeric-sort";
-        pub const VERSION: &str = "version-sort";
-        pub const RANDOM: &str = "random-sort";
+        pub const SORT: &'static str = "sort";
+        pub const HUMAN_NUMERIC: &'static str = "human-numeric-sort";
+        pub const MONTH: &'static str = "month-sort";
+        pub const NUMERIC: &'static str = "numeric-sort";
+        pub const GENERAL_NUMERIC: &'static str = "general-numeric-sort";
+        pub const VERSION: &'static str = "version-sort";
+        pub const RANDOM: &'static str = "random-sort";
     }
-
     pub mod check {
-        pub const CHECK: &str = "check";
-        pub const CHECK_SILENT: &str = "check-silent";
-        pub const SILENT: &str = "silent";
-        pub const QUIET: &str = "quiet";
-        pub const DIAGNOSE_FIRST: &str = "diagnose-first";
+        pub const CHECK: &'static str = "check";
+        pub const CHECK_SILENT: &'static str = "check-silent";
+        pub const SILENT: &'static str = "silent";
+        pub const QUIET: &'static str = "quiet";
+        pub const DIAGNOSE_FIRST: &'static str = "diagnose-first";
     }
-
-    pub const HELP: &str = "help";
-    pub const VERSION: &str = "version";
-    pub const DICTIONARY_ORDER: &str = "dictionary-order";
-    pub const MERGE: &str = "merge";
-    pub const DEBUG: &str = "debug";
-    pub const IGNORE_CASE: &str = "ignore-case";
-    pub const IGNORE_LEADING_BLANKS: &str = "ignore-leading-blanks";
-    pub const IGNORE_NONPRINTING: &str = "ignore-nonprinting";
-    pub const OUTPUT: &str = "output";
-    pub const REVERSE: &str = "reverse";
-    pub const STABLE: &str = "stable";
-    pub const UNIQUE: &str = "unique";
-    pub const KEY: &str = "key";
-    pub const SEPARATOR: &str = "field-separator";
-    pub const ZERO_TERMINATED: &str = "zero-terminated";
-    pub const PARALLEL: &str = "parallel";
-    pub const FILES0_FROM: &str = "files0-from";
-    pub const BUF_SIZE: &str = "buffer-size";
-    pub const TMP_DIR: &str = "temporary-directory";
-    pub const COMPRESS_PROG: &str = "compress-program";
-    pub const BATCH_SIZE: &str = "batch-size";
-    pub const RANDOM_SOURCE: &str = "random-source";
-
-    pub const FILES: &str = "files";
+    pub const HELP: &'static str = "help";
+    pub const VERSION: &'static str = "version";
+    pub const DICTIONARY_ORDER: &'static str = "dictionary-order";
+    pub const MERGE: &'static str = "merge";
+    pub const DEBUG: &'static str = "debug";
+    pub const IGNORE_CASE: &'static str = "ignore-case";
+    pub const IGNORE_LEADING_BLANKS: &'static str = "ignore-leading-blanks";
+    pub const IGNORE_NONPRINTING: &'static str = "ignore-nonprinting";
+    pub const OUTPUT: &'static str = "output";
+    pub const REVERSE: &'static str = "reverse";
+    pub const STABLE: &'static str = "stable";
+    pub const UNIQUE: &'static str = "unique";
+    pub const KEY: &'static str = "key";
+    pub const SEPARATOR: &'static str = "field-separator";
+    pub const ZERO_TERMINATED: &'static str = "zero-terminated";
+    pub const PARALLEL: &'static str = "parallel";
+    pub const FILES0_FROM: &'static str = "files0-from";
+    pub const BUF_SIZE: &'static str = "buffer-size";
+    pub const TMP_DIR: &'static str = "temporary-directory";
+    pub const COMPRESS_PROG: &'static str = "compress-program";
+    pub const BATCH_SIZE: &'static str = "batch-size";
+    pub const RANDOM_SOURCE: &'static str = "random-source";
+    pub const FILES: &'static str = "files";
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 const DECIMAL_PT: u8 = b'.';
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::comparisons::c_locale(),
-    ensures result == b'.',
-))]
 fn locale_decimal_pt() -> u8 {
-    #[cfg(not(verus_keep_ghost))]
-    let bytes = locale_decimal_separator().as_bytes();
-    #[cfg(verus_keep_ghost)]
     let bytes = crate::trusted::sorting::locale_decimal_bytes();
     match bytes.first().copied() {
         Some(b'.') => b'.',
@@ -154,86 +113,62 @@ fn locale_decimal_pt() -> u8 {
         _ => DECIMAL_PT,
     }
 }
-
-const NEGATIVE: &u8 = &b'-';
-const POSITIVE: &u8 = &b'+';
-
-// The automatic buffer heuristics clamp to this range to avoid
-// over-committing memory on constrained systems while still keeping
-// reasonably large chunks for typical workloads.
-const MIN_AUTOMATIC_BUF_SIZE: usize = 512 * 1024; // 512 KiB
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-const FALLBACK_AUTOMATIC_BUF_SIZE: usize = 32 * 1024 * 1024; // 32 MiB
-const MAX_AUTOMATIC_BUF_SIZE: usize = 1024 * 1024 * 1024; // 1 GiB
-
-#[derive(Debug, thiserror::Error)]
+const NEGATIVE: &'static u8 = &b'-';
+const POSITIVE: &'static u8 = &b'+';
+const MIN_AUTOMATIC_BUF_SIZE: usize = 512 * 1024;
+const FALLBACK_AUTOMATIC_BUF_SIZE: usize = 32 * 1024 * 1024;
+const MAX_AUTOMATIC_BUF_SIZE: usize = 1024 * 1024 * 1024;
+#[derive(Debug, thiserror :: Error)]
 pub enum SortError {
-    #[error("{}", format_disorder(.file, .line_number, .line, .silent))]
+    # [error ("{}" , format_disorder (. file , . line_number , . line , . silent))]
     Disorder {
         file: OsString,
         line_number: usize,
         line: String,
         silent: bool,
     },
-
-    #[error("{}", translate_text!("sort-open-failed", "path" => format!("{}", .path.maybe_quote()), "error" => strip_errno(.error)))]
+    # [error ("{}" , translate_text ! ("sort-open-failed" , "path" => format ! ("{}" , . path . maybe_quote ()) , "error" => strip_errno (. error)))]
     OpenFailed {
         path: PathBuf,
         error: std::io::Error,
     },
-
-    #[error("{}", translate_text!("sort-truncate-failed", "path" => format!("{}", .path.maybe_quote()), "error" => strip_errno(.error)))]
+    # [error ("{}" , translate_text ! ("sort-truncate-failed" , "path" => format ! ("{}" , . path . maybe_quote ()) , "error" => strip_errno (. error)))]
     TruncateFailed {
         path: PathBuf,
         error: std::io::Error,
     },
-
-    #[error("{}", translate_text!("sort-cannot-read", "path" => format!("{}", .path.maybe_quote()), "error" => strip_errno(.error)))]
+    # [error ("{}" , translate_text ! ("sort-cannot-read" , "path" => format ! ("{}" , . path . maybe_quote ()) , "error" => strip_errno (. error)))]
     ReadFailed {
         path: PathBuf,
         error: std::io::Error,
     },
-
-    #[error("{}", translate!("sort-read-failed", "error" => strip_errno(.error)))]
+    # [error ("{}" , translate ! ("sort-read-failed" , "error" => strip_errno (. error)))]
     ChunkReadFailed { error: std::io::Error },
-
-    #[error("{}", translate!("sort-open-tmp-file-failed", "error" => strip_errno(.error)))]
+    # [error ("{}" , translate ! ("sort-open-tmp-file-failed" , "error" => strip_errno (. error)))]
     OpenTmpFileFailed { error: std::io::Error },
-
-    #[error("{}", translate!("sort-compress-prog-execution-failed", "prog" => .prog, "error" => strip_errno(.error)))]
+    # [error ("{}" , translate ! ("sort-compress-prog-execution-failed" , "prog" => . prog , "error" => strip_errno (. error)))]
     CompressProgExecutionFailed { prog: String, error: std::io::Error },
-
-    #[error("{}", translate!("sort-compress-prog-terminated-abnormally", "prog" => .prog.quote()))]
+    # [error ("{}" , translate ! ("sort-compress-prog-terminated-abnormally" , "prog" => . prog . quote ()))]
     CompressProgTerminatedAbnormally { prog: String },
-
-    #[error("{}", translate_text!("sort-cannot-create-tmp-file", "path" => format!("{}", .path.quote())))]
+    # [error ("{}" , translate_text ! ("sort-cannot-create-tmp-file" , "path" => format ! ("{}" , . path . quote ())))]
     TmpFileCreationFailed { path: PathBuf },
-
-    #[error("{}", translate_text!("sort-file-operands-combined", "file" => format!("{}", .file.quote()), "help" => uucore::execution_phrase()))]
+    # [error ("{}" , translate_text ! ("sort-file-operands-combined" , "file" => format ! ("{}" , . file . quote ()) , "help" => uucore :: execution_phrase ()))]
     FileOperandsCombined { file: PathBuf },
-
     #[error("{error}")]
     Uft8Error { error: Utf8Error },
-
-    #[error("{}", translate!("sort-multiple-output-files"))]
+    # [error ("{}" , translate ! ("sort-multiple-output-files"))]
     MultipleOutputFiles,
-
-    #[error("{}", translate!("sort-incompatible-tabs"))]
+    # [error ("{}" , translate ! ("sort-incompatible-tabs"))]
     IncompatibleTabs,
-
-    #[error("{}", translate!("sort-minus-in-stdin"))]
+    # [error ("{}" , translate ! ("sort-minus-in-stdin"))]
     MinusInStdIn,
-
-    #[error("{}", translate_text!("sort-no-input-from", "file" => format!("{}", .file.quote())))]
+    # [error ("{}" , translate_text ! ("sort-no-input-from" , "file" => format ! ("{}" , . file . quote ())))]
     EmptyInputFile { file: PathBuf },
-
-    #[error("{}", translate_text!("sort-random-source-end-of-file", "path" => format!("{}", .path.quote())))]
+    # [error ("{}" , translate_text ! ("sort-random-source-end-of-file" , "path" => format ! ("{}" , . path . quote ())))]
     RandomSourceEndOfFile { path: PathBuf },
-
-    #[error("{}", translate_text!("sort-invalid-zero-length-filename", "file" => .file.maybe_quote(), "line_num" => .line_num))]
+    # [error ("{}" , translate_text ! ("sort-invalid-zero-length-filename" , "file" => . file . maybe_quote () , "line_num" => . line_num))]
     ZeroLengthFileName { file: PathBuf, line_num: usize },
 }
-
 impl UError for SortError {
     fn code(&self) -> i32 {
         match self {
@@ -242,23 +177,15 @@ impl UError for SortError {
         }
     }
 }
-
-// refs are required because this fn is used by thiserror macro
 #[expect(clippy::trivially_copy_pass_by_ref)]
 fn format_disorder(file: &OsString, line_number: &usize, line: &String, silent: &bool) -> String {
     if *silent {
         String::new()
     } else {
-        // `line` is the offending input line echoed back verbatim (GNU sort does the
-        // same): it must not be reinterpreted as a number by `translate!`, which would
-        // reformat it via Fluent's numeric formatting (e.g. "1.10" -> "1.1", "1e5" ->
-        // "100000", "nan" -> "NaN").
-        translate_text!("sort-error-disorder", "file" => file.maybe_quote(), "line_number" => line_number, "line" => line.to_owned())
+        translate_text ! ("sort-error-disorder" , "file" => file . maybe_quote () , "line_number" => line_number , "line" => line . to_owned ())
     }
 }
-
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Copy, Debug)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 enum SortMode {
     Numeric,
     HumanNumeric,
@@ -268,23 +195,16 @@ enum SortMode {
     Random,
     Default,
 }
-
-/// Return the length of the byte slice while ignoring embedded NULs (used for debug underline alignment).
 fn count_non_null_bytes(bytes: &[u8]) -> usize {
     bytes.iter().filter(|&&c| c != b'\0').count()
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct Output {
     file: Option<(OsString, File)>,
 }
-
 impl Output {
     fn new(name: Option<impl AsRef<OsStr>>) -> UResult<Self> {
         let file = if let Some(name) = name {
             let path = Path::new(name.as_ref());
-            // This is different from `File::create()` because we don't truncate the output yet.
-            // This allows using the output file as an input file.
             #[allow(clippy::suspicious_open_options)]
             let file = OpenOptions::new()
                 .write(true)
@@ -300,11 +220,9 @@ impl Output {
         };
         Ok(Self { file })
     }
-
     fn into_write(self) -> UResult<BufWriter<Box<dyn Write>>> {
         Ok(BufWriter::new(match self.file {
             Some((name, file)) => {
-                // Only regular files can be truncated; there a failure leaves stale bytes.
                 if file.metadata().is_ok_and(|meta| meta.is_file()) {
                     file.set_len(0).map_err(|error| SortError::TruncateFailed {
                         path: PathBuf::from(name),
@@ -316,29 +234,22 @@ impl Output {
             None => Box::new(stdout()),
         }))
     }
-
     fn as_output_name(&self) -> Option<&OsStr> {
         match &self.file {
             Some((name, _file)) => Some(name.as_os_str()),
             None => None,
         }
     }
-
-    /// Error context for a failed write to this output, naming the file or standard output.
     fn write_failed_context(&self) -> impl Fn() -> String + use<> {
         let output_name = self
             .as_output_name()
             .unwrap_or(OsStr::new("standard output"))
             .to_owned();
-        move || translate_text!("sort-error-write-failed", "output" => output_name.maybe_quote())
+        move || translate_text ! ("sort-error-write-failed" , "output" => output_name . maybe_quote ())
     }
 }
-
 #[derive(Clone)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct GlobalSettings {
-    #[cfg(verus_keep_ghost)]
-    specification: Ghost<Option<crate::order::SortOptions>>,
     mode: SortMode,
     debug: bool,
     ignore_leading_blanks: bool,
@@ -363,14 +274,11 @@ pub struct GlobalSettings {
     numeric_locale: NumericLocaleSettings,
     precomputed: Precomputed,
 }
-
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct NumericLocaleSettings {
     thousands_sep: Option<u8>,
     decimal_pt: Option<u8>,
 }
-
 impl Default for NumericLocaleSettings {
     fn default() -> Self {
         Self {
@@ -379,14 +287,7 @@ impl Default for NumericLocaleSettings {
         }
     }
 }
-
 impl NumericLocaleSettings {
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_verify)]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        ensures result.accept_si_units == accept_si_units, result.fold_si_units == fold_si_units,
-            result.thousands_separator == self.thousands_sep, result.decimal_pt == self.decimal_pt,
-    ))]
     fn num_info_settings(self, accept_si_units: bool, fold_si_units: bool) -> NumInfoParseSettings {
         NumInfoParseSettings {
             accept_si_units,
@@ -396,11 +297,7 @@ impl NumericLocaleSettings {
         }
     }
 }
-
-/// Data needed for sorting. Should be computed once before starting to sort
-/// by calling `GlobalSettings::init_precomputed`.
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct Precomputed {
     needs_tokens: bool,
     num_infos_per_line: usize,
@@ -413,15 +310,8 @@ struct Precomputed {
     tokenize_blank_thousands_sep: bool,
     tokenize_allow_unit_after_blank: bool,
 }
-
 impl GlobalSettings {
-    /// Parse a SIZE string into a number of bytes.
-    /// A size string comprises an integer and an optional unit.
-    /// The unit may be k, K, m, M, g, G, t, T, P, E, Z, Y (powers of 1024), or b which is 1.
-    /// Default is K.
     fn parse_byte_count(input: &str) -> Result<usize, ParseSizeError> {
-        // GNU sort (8.32)   valid: 1b,        k, K, m, M, g, G, t, T, P, E, Z, Y
-        // GNU sort (8.32) invalid:  b, B, 1B,                         p, e, z, y
         let size = Parser::default()
             .with_allow_list(&[
                 "b", "k", "K", "m", "M", "g", "G", "t", "T", "P", "E", "Z", "Y", "R", "Q", "%",
@@ -429,98 +319,46 @@ impl GlobalSettings {
             .with_default_unit("K")
             .with_b_byte_count(true)
             .parse(input.trim())?;
-
         usize::try_from(size).map_err(|_| {
-            ParseSizeError::SizeTooBig(translate!("sort-error-buffer-size-too-big", "size" => size))
+            ParseSizeError::SizeTooBig(
+                translate ! ("sort-error-buffer-size-too-big" , "size" => size),
+            )
         })
     }
-
-    /// Precompute some data needed for sorting.
-    /// This function **must** be called before starting to sort, and `GlobalSettings` may not be altered
-    /// afterwards.
-    ///
-    /// When i18n-collator is enabled, `disable_fast_lexicographic` should be set to true if we're
-    /// in a UTF-8 locale (to force locale-aware collation instead of byte comparison).
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        ensures crate::proof::configuration::unchanged(old(self), final(self)),
-            final(self).precomputed == crate::proof::configuration::precomputed(old(self), disable_fast_lexicographic),
-    ))]
     fn init_precomputed(&mut self, disable_fast_lexicographic: bool) {
-        #[cfg(not(verus_keep_ghost))]
         {
-        self.precomputed.needs_tokens = self.selectors.iter().any(|s| s.needs_tokens);
-        self.precomputed.selections_per_line =
-            self.selectors.iter().filter(|s| s.needs_selection).count();
-        self.precomputed.num_infos_per_line = self
-            .selectors
-            .iter()
-            .filter(|s| matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric))
-            .count();
-        self.precomputed.floats_per_line = self
-            .selectors
-            .iter()
-            .filter(|s| matches!(s.settings.mode, SortMode::GeneralNumeric))
-            .count();
-
-        let uses_numeric = self
-            .selectors
-            .iter()
-            .any(|s| matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric));
-        let uses_human_numeric = self
-            .selectors
-            .iter()
-            .any(|s| matches!(s.settings.mode, SortMode::HumanNumeric));
-        self.precomputed.tokenize_blank_thousands_sep = self.separator.is_none()
-            && uses_numeric
-            && self.numeric_locale.thousands_sep == Some(b' ');
-        self.precomputed.tokenize_allow_unit_after_blank =
-            self.precomputed.tokenize_blank_thousands_sep && uses_human_numeric;
-        }
-        #[cfg(verus_keep_ghost)]
-        {
-            self.precomputed.needs_tokens = verus_exec_expr! {
-                crate::trusted::configuration::any(&self.selectors,
-                    |s: &FieldSelector| -> (result: bool) ensures result == s.needs_tokens,
-                    { s.needs_tokens }, Ghost(|s: FieldSelector| s.needs_tokens))
-            };
-            self.precomputed.selections_per_line = verus_exec_expr! {
-                crate::trusted::configuration::count(&self.selectors,
-                    |s: &FieldSelector| -> (result: bool) ensures result == s.needs_selection,
-                    { s.needs_selection }, Ghost(|s: FieldSelector| s.needs_selection))
-            };
-            self.precomputed.num_infos_per_line = verus_exec_expr! {
-                crate::trusted::configuration::count(&self.selectors,
-                    |s: &FieldSelector| -> (result: bool)
-                        ensures result == matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric),
-                    { matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric) },
-                    Ghost(|s: FieldSelector| matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric)))
-            };
-            self.precomputed.floats_per_line = verus_exec_expr! {
-                crate::trusted::configuration::count(&self.selectors,
-                    |s: &FieldSelector| -> (result: bool) ensures result == (s.settings.mode == SortMode::GeneralNumeric),
-                    { matches!(s.settings.mode, SortMode::GeneralNumeric) },
-                    Ghost(|s: FieldSelector| s.settings.mode == SortMode::GeneralNumeric))
-            };
-            let uses_numeric = verus_exec_expr! {
-                crate::trusted::configuration::any(&self.selectors,
-                    |s: &FieldSelector| -> (result: bool)
-                        ensures result == matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric),
-                    { matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric) },
-                    Ghost(|s: FieldSelector| matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric)))
-            };
-            let uses_human_numeric = verus_exec_expr! {
-                crate::trusted::configuration::any(&self.selectors,
-                    |s: &FieldSelector| -> (result: bool) ensures result == (s.settings.mode == SortMode::HumanNumeric),
-                    { matches!(s.settings.mode, SortMode::HumanNumeric) },
-                    Ghost(|s: FieldSelector| s.settings.mode == SortMode::HumanNumeric))
-            };
+            self.precomputed.needs_tokens =
+                crate::trusted::configuration::any(&self.selectors, |s: &FieldSelector| -> bool {
+                    s.needs_tokens
+                });
+            self.precomputed.selections_per_line = crate::trusted::configuration::count(
+                &self.selectors,
+                |s: &FieldSelector| -> bool { s.needs_selection },
+            );
+            self.precomputed.num_infos_per_line = crate::trusted::configuration::count(
+                &self.selectors,
+                |s: &FieldSelector| -> bool {
+                    matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric)
+                },
+            );
+            self.precomputed.floats_per_line = crate::trusted::configuration::count(
+                &self.selectors,
+                |s: &FieldSelector| -> bool { matches!(s.settings.mode, SortMode::GeneralNumeric) },
+            );
+            let uses_numeric =
+                crate::trusted::configuration::any(&self.selectors, |s: &FieldSelector| -> bool {
+                    matches!(s.settings.mode, SortMode::Numeric | SortMode::HumanNumeric)
+                });
+            let uses_human_numeric =
+                crate::trusted::configuration::any(&self.selectors, |s: &FieldSelector| -> bool {
+                    matches!(s.settings.mode, SortMode::HumanNumeric)
+                });
             self.precomputed.tokenize_blank_thousands_sep = self.separator.is_none()
-                && uses_numeric && self.numeric_locale.thousands_sep == Some(b' ');
+                && uses_numeric
+                && self.numeric_locale.thousands_sep == Some(b' ');
             self.precomputed.tokenize_allow_unit_after_blank =
                 self.precomputed.tokenize_blank_thousands_sep && uses_human_numeric;
         }
-
         self.precomputed.fast_lexicographic =
             !disable_fast_lexicographic && self.can_use_fast_lexicographic();
         self.precomputed.fast_locale_collation =
@@ -528,23 +366,10 @@ impl GlobalSettings {
         self.precomputed.fast_ascii_insensitive = self.can_use_fast_ascii_insensitive();
         self.precomputed.whole_line_numeric = self.can_use_whole_line_numeric();
     }
-
-    /// Returns true when a number parsed from the whole line can stand in for
-    /// the key.
-    ///
-    /// `-n` parses the line once up front and compares those numbers before
-    /// looking at any key. That is only the same comparison when the single
-    /// key spans the entire line: `-n -k1.2` sorts on the line's second
-    /// character onwards, and `-n -t. -k2` on its second field, neither of
-    /// which the line as a whole stands for. A key whose `r` differs from the
-    /// global one also has to go the long way, since the shortcut only knows
-    /// the global one.
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        ensures result == crate::proof::configuration::whole_line_numeric(self),
-    ))]
     fn can_use_whole_line_numeric(&self) -> bool {
-        if self.selectors.len() != 1 { return false; }
+        if self.selectors.len() != 1 {
+            return false;
+        }
         let selector = &self.selectors[0];
         matches!(self.mode, SortMode::Numeric)
             && matches!(selector.settings.mode, SortMode::Numeric)
@@ -553,17 +378,10 @@ impl GlobalSettings {
             && selector.from.char == 1
             && selector.to.is_none()
     }
-
-    /// Returns true when the fast lexicographic path can be used safely.
-    /// Note: When i18n-collator is enabled, the caller must have already determined
-    /// whether locale-aware collation is needed (via checking if we're in a UTF-8 locale).
-    /// This check is performed in [`uumain()`] before `init_precomputed()` is called.
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        ensures result == crate::proof::configuration::fast_text(self, false),
-    ))]
     fn can_use_fast_lexicographic(&self) -> bool {
-        if self.selectors.len() != 1 { return false; }
+        if self.selectors.len() != 1 {
+            return false;
+        }
         let selector = &self.selectors[0];
         matches!(self.mode, SortMode::Default)
             && !self.ignore_case
@@ -578,14 +396,10 @@ impl GlobalSettings {
             && !selector.settings.ignore_blanks
             && selector.settings.reverse == self.reverse
     }
-
-    /// Returns true when the ASCII case-insensitive fast path is valid.
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        ensures result == crate::proof::configuration::fast_text(self, true),
-    ))]
     fn can_use_fast_ascii_insensitive(&self) -> bool {
-        if self.selectors.len() != 1 { return false; }
+        if self.selectors.len() != 1 {
+            return false;
+        }
         let selector = &self.selectors[0];
         matches!(self.mode, SortMode::Default)
             && self.ignore_case
@@ -601,12 +415,9 @@ impl GlobalSettings {
             && selector.settings.reverse == self.reverse
     }
 }
-
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
-            #[cfg(verus_keep_ghost)]
-            specification: verus_exec_expr! { Ghost(None) },
             mode: SortMode::Default,
             debug: false,
             ignore_leading_blanks: false,
@@ -633,9 +444,7 @@ impl Default for GlobalSettings {
         }
     }
 }
-
 #[derive(Clone, PartialEq, Debug)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct KeySettings {
     mode: SortMode,
     ignore_blanks: bool,
@@ -644,7 +453,6 @@ struct KeySettings {
     ignore_non_printing: bool,
     reverse: bool,
 }
-
 impl From<&GlobalSettings> for KeySettings {
     fn from(settings: &GlobalSettings) -> Self {
         Self {
@@ -657,13 +465,11 @@ impl From<&GlobalSettings> for KeySettings {
         }
     }
 }
-
 impl Default for KeySettings {
     fn default() -> Self {
         Self::from(&GlobalSettings::default())
     }
 }
-
 #[derive(Clone, Copy, Debug, Default)]
 struct ModeFlags {
     numeric: bool,
@@ -673,7 +479,6 @@ struct ModeFlags {
     version: bool,
     random: bool,
 }
-
 impl ModeFlags {
     fn from_mode(mode: SortMode) -> Self {
         let mut flags = Self::default();
@@ -688,7 +493,6 @@ impl ModeFlags {
         }
         flags
     }
-
     fn to_mode(self) -> SortMode {
         if self.numeric {
             SortMode::Numeric
@@ -707,7 +511,6 @@ impl ModeFlags {
         }
     }
 }
-
 fn ordering_opts_string(
     flags: ModeFlags,
     dictionary_order: bool,
@@ -744,7 +547,6 @@ fn ordering_opts_string(
     }
     opts
 }
-
 fn ordering_incompatible(
     flags: ModeFlags,
     dictionary_order: bool,
@@ -754,64 +556,34 @@ fn ordering_incompatible(
         + u8::from(flags.general_numeric)
         + u8::from(flags.human_numeric)
         + u8::from(flags.month);
-
-    // Multiple numeric/month modes are incompatible
     if mode_count > 1 {
         return true;
     }
-
-    // A numeric/month mode combined with version/random/dictionary/ignore_non_printing is incompatible
     if mode_count == 1 {
         return flags.version || flags.random || dictionary_order || ignore_non_printing;
     }
-
     false
 }
-
 fn incompatible_options_message(opts: &str) -> String {
-    translate!(
-        "sort-options-incompatible",
-        "opt1" => opts,
-        "opt2" => ""
-    )
+    translate ! ("sort-options-incompatible" , "opt1" => opts , "opt2" => "")
 }
-
 #[cold]
 #[inline(never)]
 fn incompatible_options_error(opts: &str) -> Box<dyn UError> {
     USimpleError::new(2, incompatible_options_message(opts))
 }
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 enum Selection<'a> {
     AsBigDecimal(GeneralBigDecimalParseResult),
     WithNumInfo(&'a [u8], NumInfo),
     Str(&'a [u8]),
 }
-
 type Field = Range<usize>;
-
 #[derive(Clone, Debug)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct Line<'a> {
     line: &'a [u8],
     index: usize,
 }
-
 impl<'a> Line<'a> {
-    /// Creates a new `Line`.
-    ///
-    /// If additional data is needed for sorting it is added to `line_data`.
-    /// `token_buffer` allows to reuse the allocation for tokens.
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        requires crate::proof::native_settings_valid(settings),
-            crate::proof::sorting::cache_shape(old(line_data), settings, index as int),
-        ensures result.line@ == line@, result.index == index,
-            crate::proof::cached_line(&result, settings, final(line_data)),
-            crate::proof::sorting::cache_shape(final(line_data), settings, index as int + 1),
-            crate::proof::sorting::cache_extends(old(line_data), final(line_data)),
-    ))]
     fn create<'s>(
         line: &'a [u8],
         index: usize,
@@ -819,16 +591,7 @@ impl<'a> Line<'a> {
         token_buffer: &mut Vec<Field>,
         settings: &'s GlobalSettings,
     ) -> Self {
-        #[cfg(verus_keep_ghost)]
         let line = crate::trusted::bounded_bytes(line);
-        #[cfg(verus_keep_ghost)]
-        proof_decl! { let ghost initial_data = *line_data; }
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            crate::proof::native_settings_facts(settings);
-            crate::proof::sorting::selectors_ready(settings);
-            crate::proof::sorting::cache_counts(settings);
-        }
         #[cfg(feature = "i18n-collator")]
         if settings.precomputed.fast_locale_collation {
             compute_sort_key_utf8(line, &mut line_data.collation_key_buffer);
@@ -837,18 +600,12 @@ impl<'a> Line<'a> {
                 .push(line_data.collation_key_buffer.len());
             return Self { line, index };
         }
-
         let needs_line_data = settings.precomputed.needs_tokens
             || settings.precomputed.selections_per_line > 0
             || settings.precomputed.num_infos_per_line > 0
             || settings.precomputed.floats_per_line > 0
             || settings.precomputed.whole_line_numeric;
         if !needs_line_data {
-            #[cfg(verus_keep_ghost)]
-            proof! {
-                crate::proof::sorting::empty_cache(&Self { line, index }, settings, line_data);
-                crate::proof::sorting::cache_extends_reflexive(line_data);
-            }
             return Self { line, index };
         }
         token_buffer.clear();
@@ -860,54 +617,25 @@ impl<'a> Line<'a> {
                 &settings.precomputed,
             );
         }
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            if settings.precomputed.needs_tokens {
-                crate::proof::keys::fields_bounds(line@, settings.separator);
-            }
-        }
         if settings.precomputed.whole_line_numeric {
-            // exclude inf, nan, scientific notation; GNU -n does not treat '+' as a sign
-            #[cfg(not(verus_keep_ghost))]
-            let line_num_float = (!line.iter().any(u8::is_ascii_alphabetic))
-                .then(|| std::str::from_utf8(line).ok())
-                .flatten()
-                .filter(|s| !s.trim_ascii_start().starts_with('+'))
-                .and_then(|s| s.parse::<f64>().ok());
-            #[cfg(verus_keep_ghost)]
-            let line_num_float = if crate::trusted::sorting::any_ascii_alpha(line) { None }
-                else { match crate::trusted::sorting::utf8(line) {
+            let line_num_float = if crate::trusted::sorting::any_ascii_alpha(line) {
+                None
+            } else {
+                match crate::trusted::sorting::utf8(line) {
                     Err(_) => None,
-                    Ok(text) => if crate::trusted::sorting::trimmed_plus(text) { None }
-                        else { crate::trusted::sorting::float_from_str(text) },
-                } };
-            #[cfg(verus_keep_ghost)]
-            proof! { assert(line_num_float == crate::proof::native_float_hint(line@)); }
+                    Ok(text) => {
+                        if crate::trusted::sorting::trimmed_plus(text) {
+                            None
+                        } else {
+                            crate::trusted::sorting::float_from_str(text)
+                        }
+                    }
+                }
+            };
             line_data.line_num_floats.push(line_num_float);
         }
-        #[cfg(verus_keep_ghost)]
-        proof! { crate::proof::sorting::begin_cache(line@, index, settings, &initial_data, line_data); }
-        #[cfg_attr(verus_keep_ghost, verus_spec(state =>
-            invariant crate::proof::native_settings_valid(settings),
-                line@.len() <= isize::MAX, state.seq().unref() == settings.selectors@,
-                settings.precomputed.needs_tokens ==> crate::proof::keys::field_values(token_buffer@)
-                    == crate::proof::keys::fields_model(line@, settings.separator),
-                forall|j: int| 0 <= j < settings.selectors.len() ==>
-                    crate::proof::sorting::selector_ready(&settings.selectors@[j]),
-                crate::proof::sorting::cache_prefix(line@, index, settings, line_data, state.index()),
-                crate::proof::sorting::cache_extends(&initial_data, line_data),
-        ))]
         for selector in &settings.selectors {
-            #[cfg(verus_keep_ghost)]
-            proof! {
-                crate::proof::native_settings_facts(settings);
-                crate::proof::sorting::cache_counts(settings);
-                if selector.needs_tokens { crate::proof::keys::fields_bounds(line@, settings.separator); }
-                crate::proof::sorting::selection_fields(line@, selector, token_buffer@, settings.separator);
-            }
             let selection = selector.get_selection(line, token_buffer, settings.numeric_locale);
-            #[cfg(verus_keep_ghost)]
-            proof_decl! { let ghost before = *line_data; let ghost selected = selection; }
             match selection {
                 Selection::AsBigDecimal(parsed_float) => line_data.parsed_floats.push(parsed_float),
                 Selection::WithNumInfo(str, num_info) => {
@@ -920,75 +648,34 @@ impl<'a> Line<'a> {
                     }
                 }
             }
-            #[cfg(verus_keep_ghost)]
-            proof! {
-                crate::proof::sorting::cache_step(line@, index, settings,
-                    &before, line_data, state.index(), &selected);
-                crate::proof::sorting::cache_extends_transitive(&initial_data, &before, line_data);
-            }
         }
-        #[cfg(verus_keep_ghost)]
-        proof! { crate::proof::sorting::finish_cache(&Self { line, index }, settings, line_data); }
         Self { line, index }
     }
-
-    #[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-        requires !settings.debug,
-            crate::trusted::writer_session(old(writer)) == old(log).session(),
-        ensures result is Ok, final(log).session() == old(log).session(),
-            crate::trusted::writer_session(final(writer)) == final(log).session(),
-            final(log).bytes() == old(log).bytes() + self.line@
-                + seq![crate::trusted::ending_byte(settings.line_ending)],
-            !final(log).flushed(),
-    ))]
     fn write(&self, writer: &mut impl Write, settings: &GlobalSettings) -> std::io::Result<()> {
         if settings.debug {
-            #[cfg(not(verus_keep_ghost))]
-            self.write_debug(settings, writer)?;
-            #[cfg(verus_keep_ghost)]
-            proof! { assert(false); }
         } else {
-            #[cfg(not(verus_keep_ghost))]
-            writer.write_all(self.line)?;
-            #[cfg(verus_keep_ghost)]
             {
-                proof_with! { Tracked(&mut *log) }
                 crate::trusted::write_output(writer, self.line)?;
             }
-            #[cfg(not(verus_keep_ghost))]
-            writer.write_all(&[settings.line_ending.into()])?;
-            #[cfg(verus_keep_ghost)]
             {
-                proof_with! { Tracked(&mut *log) }
                 crate::trusted::write_output(writer, &[settings.line_ending.into()])?;
             }
         }
         Ok(())
     }
-
-    /// Writes indicators for the selections this line matched. The original line content is NOT expected
-    /// to be already printed.
     fn write_debug(
         &self,
         settings: &GlobalSettings,
         writer: &mut impl Write,
     ) -> std::io::Result<()> {
-        // We do not consider this function performance critical, as debug output is only useful for small files,
-        // which are not a performance problem in any case. Therefore there aren't any special performance
-        // optimizations here.
-
         let line = self
             .line
             .iter()
             .copied()
             .map(|c| if c == b'\t' { b'>' } else { c })
             .collect::<Vec<_>>();
-
         writer.write_all(&line)?;
         writeln!(writer)?;
-
         let mut fields = vec![];
         tokenize(
             self.line,
@@ -1000,24 +687,16 @@ impl<'a> Line<'a> {
             let mut selection = selector.get_range(self.line, Some(&fields));
             match selector.settings.mode {
                 SortMode::Numeric | SortMode::HumanNumeric => {
-                    // find out which range is used for numeric comparisons
-                    // GNU marks a lowercase unit as not part of the key, even with -f.
                     let mut parse_settings = settings
                         .numeric_locale
                         .num_info_settings(selector.settings.mode == SortMode::HumanNumeric, false);
-                    // Debug annotations should ignore thousands separators to match GNU output.
                     parse_settings.thousands_separator = None;
                     let (_, num_range) =
                         NumInfo::parse(&self.line[selection.clone()], &parse_settings);
                     let initial_selection = selection.clone();
-
-                    // Shorten selection to num_range.
                     selection.start += num_range.start;
                     selection.end = selection.start + num_range.len();
-
                     if num_range == (0..0) {
-                        // This was not a valid number.
-                        // Report no match at the first non-whitespace character.
                         let leading_whitespace = self.line[selection.clone()]
                             .iter()
                             .position(|c| !c.is_ascii_whitespace())
@@ -1025,7 +704,6 @@ impl<'a> Line<'a> {
                         selection.start += leading_whitespace;
                         selection.end += leading_whitespace;
                     } else {
-                        // include a trailing si unit
                         if selector.settings.mode == SortMode::HumanNumeric
                             && self.line[selection.end..initial_selection.end]
                                 .first()
@@ -1033,8 +711,6 @@ impl<'a> Line<'a> {
                         {
                             selection.end += 1;
                         }
-
-                        // include leading zeroes, a leading minus or a leading decimal point
                         while self.line[initial_selection.start..selection.start]
                             .last()
                             .is_some_and(|c| b"-0.".contains(c))
@@ -1047,8 +723,6 @@ impl<'a> Line<'a> {
                     let initial_selection = &self.line[selection.clone()];
                     let decimal_pt = locale_decimal_pt();
                     let leading = get_leading_gen(initial_selection, decimal_pt);
-
-                    // Shorten selection to leading.
                     selection.start += leading.start;
                     selection.end = selection.start + leading.len();
                 }
@@ -1058,30 +732,20 @@ impl<'a> Line<'a> {
                         .iter()
                         .position(|&c| !is_blank(c))
                         .unwrap_or(initial_selection.len());
-
                     let (parsed, match_len) = month_parse(initial_selection);
-
                     if parsed == Month::Unknown {
-                        // We failed to parse a month, which is equivalent to matching nothing.
-                        // Add the "no match for key" marker to the first non-whitespace character.
                         selection.start += first_non_blank;
                         selection.end = selection.start;
                     } else {
-                        // We parsed a month. Use the actual match byte length.
                         selection.start += first_non_blank;
                         selection.end = selection.start + match_len;
                     }
                 }
                 _ => {}
             }
-
-            // Don't let embedded NUL bytes influence column alignment in the
-            // debug underline output, since they are often filtered out (e.g.
-            // via `tr -d '\0'`) before inspection.
             let select = &line[..selection.start];
             let indent = count_non_null_bytes(select);
             write!(writer, "{}", " ".repeat(indent))?;
-
             if selection.is_empty() {
                 writeln!(writer, "{}", translate!("sort-error-no-match-for-key"))?;
             } else {
@@ -1090,7 +754,6 @@ impl<'a> Line<'a> {
                 writeln!(writer, "{}", "_".repeat(underline_len))?;
             }
         }
-
         if settings.mode != SortMode::Random
             && !settings.stable
             && !settings.unique
@@ -1104,7 +767,6 @@ impl<'a> Line<'a> {
                     .last()
                     .is_none_or(|selector| selector != &FieldSelector::default()))
         {
-            // A last resort comparator is in use, underline the whole line.
             if self.line.is_empty() {
                 writeln!(writer, "{}", translate!("sort-error-no-match-for-key"))?;
             } else {
@@ -1114,23 +776,12 @@ impl<'a> Line<'a> {
         Ok(())
     }
 }
-
-/// Tokenize a line into fields. The result is stored into `token_buffer`.
-#[cfg_attr(verus_keep_ghost, verus_spec(
-    requires old(token_buffer).len() == 0, !precomputed.tokenize_blank_thousands_sep,
-    ensures crate::proof::keys::field_values(final(token_buffer)@)
-        == crate::proof::keys::fields_model(line@, separator),
-))]
 fn tokenize(
     line: &[u8],
     separator: Option<u8>,
     token_buffer: &mut Vec<Field>,
     precomputed: &Precomputed,
 ) {
-    #[cfg(not(verus_keep_ghost))]
-    assert!(token_buffer.is_empty());
-    #[cfg(verus_keep_ghost)]
-    proof! { assert(token_buffer.len() == 0); }
     if let Some(separator) = separator {
         tokenize_with_separator(line, separator, token_buffer);
     } else {
@@ -1142,69 +793,21 @@ fn tokenize(
         );
     }
 }
-
-/// By default fields are separated by the first whitespace after non-whitespace.
-/// Whitespace is included in fields at the start.
-/// The result is stored into `token_buffer`.
-#[cfg_attr(verus_keep_ghost, verus_spec(
-    requires old(token_buffer).len() == 0, !blank_thousands_sep,
-    ensures crate::proof::keys::field_values(final(token_buffer)@)
-        == crate::proof::keys::fields_model(line@, None),
-))]
 fn tokenize_default(
     line: &[u8],
     token_buffer: &mut Vec<Field>,
     blank_thousands_sep: bool,
     allow_unit_after_blank: bool,
 ) {
-    #[cfg(verus_keep_ghost)]
-    proof! { crate::proof::keys::append_field(token_buffer@, 0, 0); }
     token_buffer.push(0..0);
-    // pretend that there was whitespace in front of the line
     let mut previous_was_whitespace = true;
-    #[cfg(not(verus_keep_ghost))]
-    let byte_iter = line.iter().enumerate();
-    #[cfg(verus_keep_ghost)]
     let byte_iter = crate::trusted::keys::enumerate_bytes(line);
-    #[cfg(verus_keep_ghost)]
-    proof_decl! { let ghost all_bytes = byte_iter@; }
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        vstd::slice::axiom_spec_len(line);
-    }
-    #[cfg_attr(verus_keep_ghost, verus_spec(byte_state =>
-        invariant byte_state.seq() == all_bytes,
-            line@.len() <= usize::MAX,
-            crate::proof::keys::enumeration_matches(line@, all_bytes),
-            token_buffer.len() > 0,
-            crate::proof::keys::field_values(token_buffer@)
-                == crate::proof::keys::pending_fields(line@, byte_state.index()),
-            previous_was_whitespace == (byte_state.index() == 0
-                || crate::proof::ascii_blank(line@[byte_state.index() - 1])),
-    ))]
     for (idx, char) in byte_iter {
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            crate::proof::keys::advance_pending(line@, byte_state.index(), token_buffer@);
-            assert(idx == byte_state.index());
-            assert(*char == line@[idx as int]);
-        }
-        #[cfg(not(verus_keep_ghost))]
-        let is_separator = is_blank(*char)
-            && !(blank_thousands_sep
-                && *char == b' '
-                && is_blank_thousands_sep(line, idx, allow_unit_after_blank));
-        #[cfg(verus_keep_ghost)]
         let is_separator = is_blank(*char);
-
         if is_separator {
             if !previous_was_whitespace {
-                #[cfg(verus_keep_ghost)]
-                proof! { crate::proof::keys::set_field_end(token_buffer@, idx); }
                 let last = token_buffer.last_mut().unwrap();
                 last.end = idx;
-                #[cfg(verus_keep_ghost)]
-                proof! { crate::proof::keys::append_field(token_buffer@, idx, 0); }
                 token_buffer.push(idx..0);
             }
             previous_was_whitespace = true;
@@ -1212,17 +815,13 @@ fn tokenize_default(
             previous_was_whitespace = false;
         }
     }
-    #[cfg(verus_keep_ghost)]
-    proof! { crate::proof::keys::finish_pending(line@, token_buffer@); }
     let last = token_buffer.last_mut().unwrap();
     last.end = line.len();
 }
-
 fn is_blank_thousands_sep(line: &[u8], idx: usize, allow_unit_after_blank: bool) -> bool {
     if line.get(idx) != Some(&b' ') {
         return false;
     }
-
     let prev_is_digit = idx
         .checked_sub(1)
         .and_then(|prev_idx| line.get(prev_idx))
@@ -1230,78 +829,29 @@ fn is_blank_thousands_sep(line: &[u8], idx: usize, allow_unit_after_blank: bool)
     if !prev_is_digit {
         return false;
     }
-
     let next = line.get(idx + 1).copied();
     next.is_some_and(|c| {
         c.is_ascii_digit() || (allow_unit_after_blank && b"kKMGTPEZYRQ".contains(&c))
     })
 }
-
-/// Split between separators. These separators are not included in fields.
-/// The result is stored into `token_buffer`.
-#[cfg_attr(verus_keep_ghost, verus_spec(
-    requires old(token_buffer).len() == 0,
-    ensures crate::proof::keys::field_values(final(token_buffer)@)
-        == crate::proof::keys::fields_model(line@, Some(separator)),
-))]
 fn tokenize_with_separator(line: &[u8], separator: u8, token_buffer: &mut Vec<Field>) {
-    #[cfg(not(verus_keep_ghost))]
-    let separator_indices = line
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &c)| if c == separator { Some(i) } else { None });
-    #[cfg(verus_keep_ghost)]
-    let separator_indices = verus_exec_expr! {
-        crate::trusted::keys::filter_indices(line,
-            |byte: u8| -> (result: bool) ensures result == (byte == separator), { byte == separator },
-            Ghost(|byte: u8| byte == separator))
-    };
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        crate::proof::keys::same_filter(Seq::new(line@.len(), |i: int| i as usize),
-            |i: usize| (|byte: u8| byte == separator)(line@[i as int]),
-            |i: usize| crate::proof::keys::boundary(line@, Some(separator), i as int));
-        assert(separator_indices@ == crate::proof::keys::cuts(line@, Some(separator), line.len() as int));
-    }
+    let separator_indices =
+        crate::trusted::keys::filter_indices(line, |byte: u8| -> bool { byte == separator });
     let mut start = 0;
-    #[cfg_attr(verus_keep_ghost, verus_spec(separator_state =>
-        invariant separator_state.seq()
-                == crate::proof::keys::cuts(line@, Some(separator), line.len() as int),
-            crate::proof::keys::field_values(token_buffer@)
-                == crate::proof::keys::pairs(separator_state.seq().take(separator_state.index()), Some(separator)),
-            start == crate::proof::keys::start_after(
-                separator_state.seq().take(separator_state.index()), Some(separator)),
-    ))]
     for sep_idx in separator_indices {
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            crate::proof::keys::cuts_bounds(line@, Some(separator), line.len() as int);
-            crate::proof::keys::pairs_push(
-                separator_state.seq().take(separator_state.index()), Some(separator), sep_idx);
-            assert(separator_state.seq().take(separator_state.index() + 1)
-                =~= separator_state.seq().take(separator_state.index()).push(sep_idx));
-            crate::proof::keys::append_field(token_buffer@, start, sep_idx);
-        }
         token_buffer.push(start..sep_idx);
         start = sep_idx + 1;
     }
     if start < line.len() {
-        #[cfg(verus_keep_ghost)]
-        proof! { crate::proof::keys::append_field(token_buffer@, start, line.len()); }
         token_buffer.push(start..line.len());
     }
 }
-
 #[derive(Clone, PartialEq, Debug)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct KeyPosition {
-    /// 1-indexed, 0 is invalid.
     field: usize,
-    /// 1-indexed, 0 is end of field.
     char: usize,
     ignore_blanks: bool,
 }
-
 impl Default for KeyPosition {
     fn default() -> Self {
         Self {
@@ -1311,51 +861,37 @@ impl Default for KeyPosition {
         }
     }
 }
-
-/// A `-k` spec that does not parse, and the part of it that is at fault.
-///
-/// The message is built here so that it reads exactly as it always has; `kind`
-/// exists only so the crate's `diagnostics` module can pick a label for the
-/// caret.
 pub struct KeyError {
     message: String,
-    /// Byte range inside the key spec.
     span: Range<usize>,
     kind: KeyErrorKind,
 }
-
 pub enum KeyErrorKind {
-    /// A field or character number was expected, and there were no digits.
+    #[doc = " A field or character number was expected, and there were no digits."]
     MissingCount,
-    /// A number was given where counting starts at one.
+    #[doc = " A number was given where counting starts at one."]
     ZeroCount,
-    /// Something that is not a key option, past the end of the spec.
+    #[doc = " Something that is not a key option, past the end of the spec."]
     StrayCharacter,
-    /// Ordering options that contradict each other.
+    #[doc = " Ordering options that contradict each other."]
     IncompatibleOptions,
 }
-
 impl From<KeyError> for Box<dyn UError> {
     fn from(error: KeyError) -> Self {
         USimpleError::new(2, error.message)
     }
 }
-
-/// `msg_key` explains what was expected; `rest` is what was found instead.
 fn missing_count(span_start: usize, msg_key: &str, rest: &str) -> KeyError {
     KeyError {
         message: format!(
             "{}: {}",
             translate!(msg_key),
-            translate!("sort-invalid-count-at-start-of", "string" => rest.quote())
+            translate ! ("sort-invalid-count-at-start-of" , "string" => rest . quote ())
         ),
         span: span_start..span_start + rest.len(),
         kind: KeyErrorKind::MissingCount,
     }
 }
-
-/// Something past the end of the spec that is neither an ordering option nor a
-/// separator; the caret covers just that character.
 fn stray_character(key: &str, offset: usize) -> KeyError {
     let width = key[offset..].chars().next().map_or(0, char::len_utf8);
     bad_field_spec(
@@ -1365,23 +901,13 @@ fn stray_character(key: &str, offset: usize) -> KeyError {
         KeyErrorKind::StrayCharacter,
     )
 }
-
 fn bad_field_spec(spec: &str, span: Range<usize>, msg_key: &str, kind: KeyErrorKind) -> KeyError {
     KeyError {
-        message: translate!(
-            "sort-invalid-field-spec",
-            "msg" => translate!(msg_key),
-            "spec" => spec.quote()
-        ),
+        message: translate ! ("sort-invalid-field-spec" , "msg" => translate ! (msg_key) , "spec" => spec . quote ()),
         span,
         kind,
     }
 }
-
-/// Read the leading digits of `input`, returning them and what follows.
-///
-/// `offset` is where `input` starts inside the whole key spec, so that a failure
-/// can point back at it.
 fn parse_field_count<'a>(
     input: &'a str,
     offset: usize,
@@ -1403,30 +929,20 @@ fn parse_field_count<'a>(
     };
     Ok((value, rest))
 }
-
-/// Which end of a key a `FIELD[.CHAR]` position belongs to.
-///
-/// The two ends read the same but do not mean the same: a key starts at a
-/// character, so `.0` is a mistake there, while it stands for the whole field
-/// at the end of a key.
 #[derive(Clone, Copy, PartialEq)]
 enum KeyEnd {
-    /// Before the comma, or the whole spec when there is none.
+    #[doc = " Before the comma, or the whole spec when there is none."]
     From,
-    /// After the comma.
+    #[doc = " After the comma."]
     To,
 }
-
 impl KeyEnd {
-    /// What to say when the field number is missing.
     fn missing_field_key(self) -> &'static str {
         match self {
             Self::From => "sort-invalid-number-at-field-start",
             Self::To => "sort-invalid-number-after-comma",
         }
     }
-
-    /// The character offset to assume when the spec gives none.
     fn default_char(self) -> usize {
         match self {
             Self::From => 1,
@@ -1434,28 +950,12 @@ impl KeyEnd {
         }
     }
 }
-
-/// Read a `FIELD[.CHAR]` position from the head of `input`.
-///
-/// # Arguments
-///
-/// * `key` - The whole key spec, for the error message and for the offsets a
-///   caret is placed at.
-/// * `input` - What is left to parse, a suffix of `key`.
-/// * `end` - Which end of the key this position is.
-///
-/// # Returns
-///
-/// The field, the character offset inside it, and what follows the position.
 fn parse_position<'a>(
     key: &str,
     input: &'a str,
     end: KeyEnd,
 ) -> Result<(usize, usize, &'a str), KeyError> {
-    // Everything the parser hands around is a suffix of `key`, so how much is
-    // left is also where we are.
     let at = |rest: &str| key.len() - rest.len();
-
     let (field, mut rest) = parse_field_count(input, at(input), end.missing_field_key())?;
     if field == 0 {
         return Err(bad_field_spec(
@@ -1465,7 +965,6 @@ fn parse_position<'a>(
             KeyErrorKind::ZeroCount,
         ));
     }
-
     let mut char = end.default_char();
     if let Some(stripped) = rest.strip_prefix('.') {
         let (char_idx, rest_after) =
@@ -1481,31 +980,23 @@ fn parse_position<'a>(
         char = char_idx;
         rest = rest_after;
     }
-
     Ok((field, char, rest))
 }
-
 fn is_ordering_option_char(byte: u8) -> bool {
     matches!(
         byte,
         b'b' | b'd' | b'f' | b'g' | b'h' | b'i' | b'M' | b'n' | b'R' | b'r' | b'V'
     )
 }
-
-/// The part of `key` that holds ordering options, from the first one to the
-/// last: what the caret should cover when they contradict each other. The
-/// field numbers around them are not at fault, so they stay outside the span.
 fn ordering_options_span(key: &str) -> Range<usize> {
     let is_option = |(_, byte): &(usize, u8)| is_ordering_option_char(*byte);
     let mut options = key.bytes().enumerate().filter(is_option);
     let Some((first, _)) = options.next() else {
-        // Nothing to point at; fall back to the whole spec.
         return 0..key.len();
     };
     let last = options.next_back().map_or(first, |(index, _)| index);
     first..last + 1
 }
-
 fn parse_ordering_options<'a>(
     input: &'a str,
     settings: &mut KeySettings,
@@ -1540,89 +1031,58 @@ fn parse_ordering_options<'a>(
     }
     (&input[idx..], ignore_blanks)
 }
-
 #[derive(Clone, PartialEq, Debug, Default)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 struct FieldSelector {
     from: KeyPosition,
     to: Option<KeyPosition>,
     settings: KeySettings,
     needs_tokens: bool,
-    // Whether this selector operates on a sub-slice of a line.
-    // Selections are therefore not needed when this selector matches the whole line
-    // or the sort mode is general-numeric.
     needs_selection: bool,
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 enum KeyResolution {
     StartOfChar(usize),
     EndOfChar(usize),
     TooLow,
     TooHigh,
 }
-
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::keys::valid_fields(line@, crate::proof::keys::optional_fields(tokens)),
-        crate::proof::keys::valid_position(crate::proof::keys::optional_fields(tokens),
-            (position.field, position.char, position.ignore_blanks)),
-    ensures crate::proof::keys::resolve_model(line@, crate::proof::keys::optional_fields(tokens),
-        (position.field, position.char, position.ignore_blanks)) == match result {
-            KeyResolution::StartOfChar(index) => crate::proof::keys::Resolution::Start(index as int),
-            KeyResolution::EndOfChar(index) => crate::proof::keys::Resolution::End(index as int),
-            KeyResolution::TooLow => crate::proof::keys::Resolution::Low,
-            KeyResolution::TooHigh => crate::proof::keys::Resolution::High,
-        },
-        match result {
-            KeyResolution::StartOfChar(index) => index < line.len(),
-            KeyResolution::EndOfChar(index) => 0 < index <= line.len(),
-            _ => true,
-        },
-))]
 fn key_resolve_index(
-    line: &[u8], tokens: Option<&[Field]>, position: &KeyPosition,
+    line: &[u8],
+    tokens: Option<&[Field]>,
+    position: &KeyPosition,
 ) -> KeyResolution {
-    if matches!(tokens, Some(tokens) if tokens.len() < position.field) {
+    if matches ! (tokens , Some (tokens) if tokens . len () < position . field) {
         KeyResolution::TooHigh
     } else if position.char == 0 {
         let end = tokens.unwrap()[position.field - 1].end;
-        if end == 0 { KeyResolution::TooLow } else { KeyResolution::EndOfChar(end) }
+        if end == 0 {
+            KeyResolution::TooLow
+        } else {
+            KeyResolution::EndOfChar(end)
+        }
     } else {
-        let mut idx = if position.field == 1 { 0 }
-            else { tokens.unwrap()[position.field - 1].start };
+        let mut idx = if position.field == 1 {
+            0
+        } else {
+            tokens.unwrap()[position.field - 1].start
+        };
         if position.ignore_blanks {
-            #[cfg(not(verus_keep_ghost))]
-            let offset = line[idx..].iter().enumerate().find(|(_, c)| !is_blank(**c))
-                .map_or(line[idx..].len(), |(idx, _)| idx);
-            #[cfg(verus_keep_ghost)]
-            let offset = verus_exec_expr! {
-                crate::trusted::keys::find_index(&line[idx..],
-                    |byte: &u8| -> (result: bool)
-                        ensures result == !crate::proof::ascii_blank(*byte),
-                    { !is_blank(*byte) },
-                    Ghost(|byte: u8| !crate::proof::ascii_blank(byte)))
-            };
-            #[cfg(verus_keep_ghost)]
-            proof! { crate::proof::keys::found_blank_end(line@, idx as int, offset as int); }
+            let offset = crate::trusted::keys::find_index(&line[idx..], |byte: &u8| -> bool {
+                !is_blank(*byte)
+            });
             idx += offset;
         }
-        #[cfg(not(verus_keep_ghost))]
-        let offset = line[idx..].iter().enumerate().nth(position.char - 1)
-            .map_or(line[idx..].len(), |(idx, _)| idx);
-        #[cfg(verus_keep_ghost)]
         let offset = crate::trusted::keys::nth_index(&line[idx..], position.char - 1);
         idx += offset;
-        if idx >= line.len() { KeyResolution::TooHigh }
-        else { KeyResolution::StartOfChar(idx) }
+        if idx >= line.len() {
+            KeyResolution::TooHigh
+        } else {
+            KeyResolution::StartOfChar(idx)
+        }
     }
 }
-
 impl FieldSelector {
     fn parse(key: &str, global_settings: &GlobalSettings) -> Result<Self, KeyError> {
-        // Everything the parser hands around is a suffix of `key`, so how much
-        // is left is also where we are.
         let at = |rest: &str| key.len() - rest.len();
-
         let has_options = key.as_bytes().iter().copied().any(is_ordering_option_char);
         let mut settings = if has_options {
             KeySettings::default()
@@ -1634,7 +1094,6 @@ impl FieldSelector {
         } else {
             ModeFlags::from_mode(settings.mode)
         };
-
         let mut from_ignore_blanks = if has_options {
             false
         } else {
@@ -1645,19 +1104,15 @@ impl FieldSelector {
         } else {
             settings.ignore_blanks
         };
-
         let (from_field, from_char, rest) = parse_position(key, key, KeyEnd::From)?;
-
         let (rest_after_opts, ignore_blanks) =
             parse_ordering_options(rest, &mut settings, &mut flags);
         if ignore_blanks {
             from_ignore_blanks = true;
         }
-
         let mut to = None;
         if let Some(rest_after_comma) = rest_after_opts.strip_prefix(',') {
             let (to_field, to_char, rest) = parse_position(key, rest_after_comma, KeyEnd::To)?;
-
             let (rest, ignore_blanks_end) = parse_ordering_options(rest, &mut settings, &mut flags);
             if ignore_blanks_end {
                 to_ignore_blanks = true;
@@ -1673,7 +1128,6 @@ impl FieldSelector {
         } else if !rest_after_opts.is_empty() {
             return Err(stray_character(key, at(rest_after_opts)));
         }
-
         if ordering_incompatible(
             flags,
             settings.dictionary_order,
@@ -1691,9 +1145,7 @@ impl FieldSelector {
                 kind: KeyErrorKind::IncompatibleOptions,
             });
         }
-
         settings.mode = flags.to_mode();
-
         let from = KeyPosition {
             field: from_field,
             char: from_char,
@@ -1701,22 +1153,7 @@ impl FieldSelector {
         };
         Ok(Self::new(from, to, settings))
     }
-
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        requires from.char > 0,
-        ensures result.from == from, result.to == to, result.settings == settings,
-            result.needs_tokens == (from.field != 1 || to.is_some()),
-            result.needs_selection == ((from.field != 1 || from.char != 1 || to.is_some()
-                || matches!(settings.mode, SortMode::Numeric | SortMode::HumanNumeric)
-                || from.ignore_blanks) && !matches!(settings.mode, SortMode::GeneralNumeric)),
-    ))]
     fn new(from: KeyPosition, to: Option<KeyPosition>, settings: KeySettings) -> Self {
-        // A zero start position is rejected by `parse` before getting here.
-        #[cfg(not(verus_keep_ghost))]
-        debug_assert_ne!(from.char, 0);
-        #[cfg(verus_keep_ghost)]
-        proof! { assert(from.char != 0); }
         Self {
             needs_selection: (from.field != 1
                 || from.char != 1
@@ -1730,40 +1167,19 @@ impl FieldSelector {
             settings,
         }
     }
-
-    /// Get the selection that corresponds to this selector for the line.
-    /// If `needs_fields` returned false, tokens may be empty.
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_verify)]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        requires crate::proof::sorting::selector_ready(self),
-            self.needs_tokens ==> crate::proof::keys::valid_fields(line@,
-                Some(crate::proof::keys::field_values(tokens@))),
-            line.len() <= i64::MAX,
-            numeric_locale.thousands_sep is None, numeric_locale.decimal_pt == Some(b'.'),
-            crate::proof::comparisons::c_locale(),
-        ensures crate::proof::sorting::selection_valid(&result,
-            crate::proof::sorting::selection_input(line@, self, tokens@), self),
-    ))]
     fn get_selection<'a>(
         &self,
         line: &'a [u8],
         tokens: &[Field],
         numeric_locale: NumericLocaleSettings,
     ) -> Selection<'a> {
-        #[cfg(verus_keep_ghost)]
-        proof_decl! { let ghost fields = tokens@; }
-        // `get_range` expects `None` when we don't need tokens and would get confused by an empty vector.
         let tokens = if self.needs_tokens {
             Some(tokens)
         } else {
             None
         };
         let mut range_str = &line[self.get_range(line, tokens)];
-        #[cfg(verus_keep_ghost)]
-        proof! { assert(range_str@ == crate::proof::sorting::selection_input(line@, self, fields)); }
         if self.settings.mode == SortMode::Numeric || self.settings.mode == SortMode::HumanNumeric {
-            // Parse NumInfo for this number.
             let (info, num_range) = NumInfo::parse(
                 range_str,
                 &numeric_locale.num_info_settings(
@@ -1771,60 +1187,32 @@ impl FieldSelector {
                     self.settings.ignore_case,
                 ),
             );
-            // Shorten the range to what we need to pass to numeric_str_cmp later.
             range_str = &range_str[num_range];
             Selection::WithNumInfo(range_str, info)
         } else if self.settings.mode == SortMode::GeneralNumeric {
-            // Parse this number as BigDecimal, as this is the requirement for general numeric sorting.
             let decimal_pt = locale_decimal_pt();
             Selection::AsBigDecimal(general_bd_parse(
                 &range_str[get_leading_gen(range_str, decimal_pt)],
                 decimal_pt,
             ))
         } else {
-            // This is not a numeric sort, so we don't need a NumCache.
             Selection::Str(range_str)
         }
     }
-
-    /// Look up the range in the line that corresponds to this selector.
-    /// If `needs_fields` returned false, tokens must be None.
-    #[cfg_attr(verus_keep_ghost, allow(unused, verus_impl_method_marker))]
-    #[cfg_attr(verus_keep_ghost, verus_spec(result =>
-        requires crate::proof::keys::valid_fields(line@, crate::proof::keys::optional_fields(tokens)),
-            self.from.char > 0,
-            crate::proof::keys::valid_position(crate::proof::keys::optional_fields(tokens),
-                (self.from.field, self.from.char, self.from.ignore_blanks)),
-            tokens is None ==> self.to is None,
-            match self.to { None => true, Some(to) =>
-                crate::proof::keys::valid_position(crate::proof::keys::optional_fields(tokens),
-                    (to.field, to.char, to.ignore_blanks)) },
-        ensures result.start <= result.end <= line.len(),
-            line@.subrange(result.start as int, result.end as int)
-                == crate::proof::keys::native_extract_model(line@,
-                    crate::proof::keys::optional_fields(tokens),
-                    (self.from.field, self.from.char, self.from.ignore_blanks),
-                    match self.to { None => None, Some(to) =>
-                        Some((to.field, to.char, to.ignore_blanks)) }),
-    ))]
     fn get_range(&self, line: &[u8], tokens: Option<&[Field]>) -> Range<usize> {
         match key_resolve_index(line, tokens, &self.from) {
             KeyResolution::StartOfChar(from) => {
-                let to = match &self.to { None => None,
-                    Some(to) => Some(key_resolve_index(line, tokens, to)) };
-
+                let to = match &self.to {
+                    None => None,
+                    Some(to) => Some(key_resolve_index(line, tokens, to)),
+                };
                 let mut range = match to {
                     Some(KeyResolution::StartOfChar(mut to)) => {
-                        // We need to include the character at `to`.
                         to += 1;
                         from..to
                     }
                     Some(KeyResolution::EndOfChar(to)) => from..to,
-                    // If `to` was not given or the match would be after the end of the line,
-                    // match everything until the end of the line.
                     None | Some(KeyResolution::TooHigh) => from..line.len(),
-                    // If `to` is before the start of the line, report no match.
-                    // This can happen if the line starts with a separator.
                     Some(KeyResolution::TooLow) => 0..0,
                 };
                 if range.start > range.end {
@@ -1832,49 +1220,32 @@ impl FieldSelector {
                 }
                 range
             }
-            KeyResolution::TooLow | KeyResolution::EndOfChar(_) => {
-                #[cfg(not(verus_keep_ghost))]
-                unreachable!(
-                    "This should only happen if the field start index is 0, but that should already have caused an error."
-                );
-                #[cfg(verus_keep_ghost)]
-                { proof! { assert(false); } 0..0 }
-            }
-            // While for comparisons it's only important that this is an empty slice,
-            // to produce accurate debug output we need to match an empty slice at the end of the line.
+            KeyResolution::TooLow | KeyResolution::EndOfChar(_) => 0..0,
             KeyResolution::TooHigh => line.len()..line.len(),
         }
     }
 }
-
 fn detect_numeric_locale() -> NumericLocaleSettings {
     let numeric_locale = i18n::get_numeric_locale();
     let locale = &numeric_locale.0;
     let encoding = numeric_locale.1;
     let is_c_locale = encoding == i18n::UEncoding::Ascii && locale.to_string() == "und";
-
     if is_c_locale {
         return NumericLocaleSettings {
             decimal_pt: Some(DECIMAL_PT),
             thousands_sep: None,
         };
     }
-
     let grouping = i18n::decimal::locale_grouping_separator();
     NumericLocaleSettings {
         decimal_pt: Some(locale_decimal_pt()),
-        // Upstream GNU coreutils ignore multibyte thousands separators
-        // (FIXME in C source). We keep the same single-byte behavior.
         thousands_sep: match grouping.as_bytes() {
             [b] => Some(*b),
-            // ICU returns NBSP as UTF-8 (0xC2 0xA0). In non-UTF8 locales like ISO-8859-1,
-            // the input byte is 0xA0, so map it to a single-byte separator.
             [0xC2, 0xA0] if encoding != i18n::UEncoding::Utf8 => Some(0xA0),
             _ => None,
         },
     }
 }
-/// Creates an `Arg` for a sort mode flag.
 fn make_sort_mode_arg(mode: &'static str, short: char, help: String) -> Arg {
     Arg::new(mode)
         .short(short)
@@ -1882,38 +1253,26 @@ fn make_sort_mode_arg(mode: &'static str, short: char, help: String) -> Arg {
         .help(help)
         .action(ArgAction::SetTrue)
 }
-
 #[cfg(unix)]
 fn get_rlimit() -> UResult<usize> {
     use rlimit::{Resource, getrlimit};
-
     let (rlim_cur, _) = getrlimit(Resource::NOFILE)
         .map_err(|_| UUsageError::new(2, translate!("sort-failed-fetch-rlimit")))?;
-
     usize::try_from(rlim_cur)
         .map_err(|_| UUsageError::new(2, translate!("sort-failed-fetch-rlimit")))
 }
-
 #[cfg(unix)]
 pub(crate) fn fd_soft_limit() -> Option<usize> {
     get_rlimit().ok()
 }
-
 #[cfg(not(unix))]
 pub(crate) fn fd_soft_limit() -> Option<usize> {
     None
 }
-
-/// The largest `--batch-size` argument that can be honoured with the current file
-/// descriptor soft limit, or `None` if that limit is unknown.
-///
-/// Three descriptors are always in use (stdin, stdout and stderr) and are therefore
-/// not available for merge inputs.
 fn max_merge_batch_size() -> Option<usize> {
     const RESERVED_STDIO: usize = 3;
     fd_soft_limit().map(|limit| limit.saturating_sub(RESERVED_STDIO))
 }
-
 #[cfg(unix)]
 pub(crate) fn current_open_fd_count() -> Option<usize> {
     fn count_dir(path: &str) -> Option<usize> {
@@ -1928,44 +1287,33 @@ pub(crate) fn current_open_fd_count() -> Option<usize> {
         }
         Some(count)
     }
-
     if let Some(count) = count_dir("/proc/self/fd").or_else(|| count_dir("/dev/fd")) {
         return Some(count);
     }
-
     let limit = fd_soft_limit().filter(|l| *l <= 16_384)?;
-
     let mut count = 0usize;
     for fd in 0..limit {
         let fd = fd as core::ffi::c_int;
-        // Probe with libc::fcntl because the fd may be invalid.
         if unsafe { libc::fcntl(fd, libc::F_GETFD) } != -1 {
             count = count.saturating_add(1);
         }
     }
     Some(count)
 }
-
 #[cfg(not(unix))]
 pub(crate) fn current_open_fd_count() -> Option<usize> {
     None
 }
-
-const STDIN_FILE: &str = "-";
-
-/// Legacy `+POS1 [-POS2]` syntax is permitted unless `_POSIX2_VERSION` is in
-/// the [TRADITIONAL, MODERN) range (matches GNU behaviour).
+const STDIN_FILE: &'static str = "-";
 fn allows_traditional_usage() -> bool {
-    !matches!(uucore::posix::posix_version(), Some(ver) if (TRADITIONAL..MODERN).contains(&ver))
+    !matches ! (uucore :: posix :: posix_version () , Some (ver) if (TRADITIONAL .. MODERN) . contains (& ver))
 }
-
 #[derive(Debug, Clone)]
 struct LegacyKeyPart {
     field: usize,
     char_pos: usize,
     opts: String,
 }
-
 #[derive(Debug, Clone)]
 struct LegacyKeyWarning {
     arg_index: usize,
@@ -1974,7 +1322,6 @@ struct LegacyKeyWarning {
     to_field: Option<usize>,
     to_char: Option<usize>,
 }
-
 impl LegacyKeyWarning {
     fn legacy_key_display(&self) -> String {
         match self.to_field {
@@ -1982,7 +1329,6 @@ impl LegacyKeyWarning {
             None => format!("+{}", self.from_field),
         }
     }
-
     fn replacement_key_display(&self) -> String {
         let start_field = self.from_field.saturating_add(1);
         match self.to_field {
@@ -1997,7 +1343,6 @@ impl LegacyKeyWarning {
         }
     }
 }
-
 #[derive(Default)]
 struct GlobalOptionFlags {
     keys_specified: bool,
@@ -2013,7 +1358,6 @@ struct GlobalOptionFlags {
     mode_random: bool,
     mode_version: bool,
 }
-
 impl GlobalOptionFlags {
     fn from_matches(matches: &ArgMatches) -> Self {
         let sort_value = matches
@@ -2039,7 +1383,6 @@ impl GlobalOptionFlags {
         }
     }
 }
-
 fn parse_usize_or_max(num: &str) -> Option<usize> {
     match num.parse::<usize>() {
         Ok(v) => Some(v),
@@ -2047,17 +1390,14 @@ fn parse_usize_or_max(num: &str) -> Option<usize> {
         Err(_) => None,
     }
 }
-
 fn parse_legacy_part(spec: &str) -> Option<LegacyKeyPart> {
     let idx = spec.chars().take_while(char::is_ascii_digit).count();
     if idx == 0 {
         return None;
     }
-
     let field = parse_usize_or_max(&spec[..idx])?;
     let mut char_pos = 0;
     let mut rest = &spec[idx..];
-
     if let Some(stripped) = rest.strip_prefix('.') {
         let char_idx = stripped.chars().take_while(char::is_ascii_digit).count();
         if char_idx == 0 {
@@ -2066,19 +1406,15 @@ fn parse_legacy_part(spec: &str) -> Option<LegacyKeyPart> {
         char_pos = parse_usize_or_max(&stripped[..char_idx])?;
         rest = &stripped[char_idx..];
     }
-
     Some(LegacyKeyPart {
         field,
         char_pos,
         opts: rest.to_string(),
     })
 }
-
-/// Convert legacy +POS1 [-POS2] into a `-k` key specification using saturating arithmetic.
 fn legacy_key_to_k(from: &LegacyKeyPart, to: Option<&LegacyKeyPart>) -> String {
     let start_field = from.field.saturating_add(1);
     let start_char = from.char_pos.saturating_add(1);
-
     let mut keydef = format!(
         "{start_field}{}{}",
         if from.char_pos == 0 {
@@ -2088,16 +1424,12 @@ fn legacy_key_to_k(from: &LegacyKeyPart, to: Option<&LegacyKeyPart>) -> String {
         },
         from.opts,
     );
-
     if let Some(to) = to {
         let end_field = if to.char_pos == 0 {
-            // When the end character index is zero, GNU keeps the field number as-is.
-            // Clamp to 1 to avoid generating an invalid field 0.
             to.field.max(1)
         } else {
             to.field.saturating_add(1)
         };
-
         keydef.push(',');
         keydef.push_str(&end_field.to_string());
         if to.char_pos != 0 {
@@ -2106,12 +1438,8 @@ fn legacy_key_to_k(from: &LegacyKeyPart, to: Option<&LegacyKeyPart>) -> String {
         }
         keydef.push_str(&to.opts);
     }
-
     keydef
 }
-
-/// Preprocess argv to handle legacy +POS1 [-POS2] syntax by converting it into -k forms
-/// before clap sees the arguments.
 fn preprocess_legacy_args<I>(args: I) -> (Vec<OsString>, Vec<LegacyKeyWarning>)
 where
     I: IntoIterator,
@@ -2120,26 +1448,21 @@ where
     if !allows_traditional_usage() {
         return (args.into_iter().map(Into::into).collect(), Vec::new());
     }
-
     let mut processed = Vec::new();
     let mut legacy_warnings = Vec::new();
     let mut iter = args.into_iter().map(Into::into).peekable();
-
     while let Some(arg) = iter.next() {
         if arg == "--" {
             processed.push(arg);
             processed.extend(iter);
             break;
         }
-
         let as_str = arg.to_string_lossy();
         if let Some(from_spec) = as_str.strip_prefix('+')
             && let Some(from) = parse_legacy_part(from_spec)
         {
             let mut to_part = None;
-
             let next_candidate = iter.peek().map(|next| next.to_string_lossy().to_string());
-
             if let Some(next_str) = next_candidate
                 && let Some(stripped) = next_str
                     .strip_prefix('-')
@@ -2154,7 +1477,6 @@ where
                     continue;
                 }
             }
-
             let keydef = legacy_key_to_k(&from, to_part.as_ref());
             let arg_index = processed.len();
             legacy_warnings.push(LegacyKeyWarning {
@@ -2167,23 +1489,18 @@ where
             processed.push(OsString::from(format!("-k{keydef}")));
             continue;
         }
-
         processed.push(arg);
     }
-
     (processed, legacy_warnings)
 }
-
 fn index_legacy_warnings(processed_args: &[OsString], legacy_warnings: &mut [LegacyKeyWarning]) {
     if legacy_warnings.is_empty() {
         return;
     }
-
     let mut index_by_arg = HashMap::default();
     for (warning_idx, warning) in legacy_warnings.iter().enumerate() {
         index_by_arg.insert(warning.arg_index, warning_idx);
     }
-
     let mut key_index = 0usize;
     let mut i = 0usize;
     while let Some(arg) = processed_args.get(i).filter(|&a| a != OsStr::new("--")) {
@@ -2210,31 +1527,20 @@ fn index_legacy_warnings(processed_args: &[OsString], legacy_warnings: &mut [Leg
             }
             i += 1;
         }
-
         if matched_key && let Some(&warning_idx) = index_by_arg.get(&i.saturating_sub(1)) {
             legacy_warnings[warning_idx].key_index = Some(key_index);
         }
     }
 }
-
 #[cfg(target_os = "linux")]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 const LINUX_BATCH_DIVISOR: usize = 4;
 #[cfg(target_os = "linux")]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 const LINUX_BATCH_MIN: usize = 32;
 #[cfg(target_os = "linux")]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 const LINUX_BATCH_MAX: usize = 256;
-
-#[cfg_attr(verus_keep_ghost, verus_spec(result => ensures result >= 2,))]
 fn default_merge_batch_size() -> usize {
     #[cfg(target_os = "linux")]
     {
-        // Adjust merge batch size dynamically based on available file descriptors.
-        #[cfg(not(verus_keep_ghost))]
-        let limit = fd_soft_limit();
-        #[cfg(verus_keep_ghost)]
         let limit = crate::trusted::descriptor_limit();
         match limit {
             Some(limit) => {
@@ -2244,23 +1550,19 @@ fn default_merge_batch_size() -> usize {
             None => 64,
         }
     }
-
     #[cfg(not(target_os = "linux"))]
     {
         64
     }
 }
-
 #[cfg(not(unix))]
 fn locale_failed_to_set() -> bool {
     env::var_os("LC_ALL").as_deref() == Some(OsStr::new("missing"))
 }
-
 #[cfg(unix)]
 fn locale_failed_to_set() -> bool {
     unsafe { libc::setlocale(libc::LC_COLLATE, c"".as_ptr()).is_null() }
 }
-
 fn key_zero_width(selector: &FieldSelector) -> bool {
     let Some(to) = &selector.to else {
         return false;
@@ -2273,7 +1575,6 @@ fn key_zero_width(selector: &FieldSelector) -> bool {
     }
     false
 }
-
 fn key_spans_multiple_fields(selector: &FieldSelector) -> bool {
     if !matches!(
         selector.settings.mode,
@@ -2286,13 +1587,11 @@ fn key_spans_multiple_fields(selector: &FieldSelector) -> bool {
         Some(to) => to.field > selector.from.field,
     }
 }
-
 fn key_leading_blanks_significant(selector: &FieldSelector) -> bool {
     selector.settings.mode == SortMode::Default
         && !selector.from.ignore_blanks
         && !selector.settings.ignore_blanks
 }
-
 fn emit_debug_warnings(
     settings: &GlobalSettings,
     flags: &GlobalOptionFlags,
@@ -2301,19 +1600,16 @@ fn emit_debug_warnings(
     if locale_failed_to_set() {
         show_error!("{}", translate!("sort-warning-failed-to-set-locale"));
     }
-
     let (locale, encoding) = i18n::get_collating_locale();
-
     if matches!(encoding, i18n::UEncoding::Utf8) {
         let locale_as_posix = format!("{}.UTF-8", locale.to_string().replace('-', "_"));
         show_error!(
             "{}",
-            translate!("sort-warning-sort-rule", "locale" => locale_as_posix)
+            translate ! ("sort-warning-sort-rule" , "locale" => locale_as_posix)
         );
     } else {
         show_error!("{}", translate!("sort-warning-simple-byte-comparison"));
     }
-
     for (key_index, selector) in (1..).zip(settings.selectors.iter()) {
         if let Some(legacy) = legacy_warnings
             .iter()
@@ -2321,48 +1617,34 @@ fn emit_debug_warnings(
         {
             show_error!(
                 "{}",
-                translate!(
-                    "sort-warning-obsolescent-key",
-                    "key" => legacy.legacy_key_display(),
-                    "replacement" => legacy.replacement_key_display()
-                )
+                translate ! ("sort-warning-obsolescent-key" , "key" => legacy . legacy_key_display () , "replacement" => legacy . replacement_key_display ())
             );
         }
-
         if key_zero_width(selector) {
             show_error!(
                 "{}",
-                translate!("sort-warning-key-zero-width", "key" => key_index)
+                translate ! ("sort-warning-key-zero-width" , "key" => key_index)
             );
             continue;
         }
-
         if flags.keys_specified && key_spans_multiple_fields(selector) {
             show_error!(
                 "{}",
-                translate!(
-                    "sort-warning-key-numeric-spans-fields",
-                    "key" => key_index
-                )
+                translate ! ("sort-warning-key-numeric-spans-fields" , "key" => key_index)
             );
         } else if flags.keys_specified && key_leading_blanks_significant(selector) {
             show_error!(
                 "{}",
-                translate!(
-                    "sort-warning-leading-blanks-significant",
-                    "key" => key_index
-                )
+                translate ! ("sort-warning-leading-blanks-significant" , "key" => key_index)
             );
         }
     }
-
     let numeric_used = settings.selectors.iter().any(|selector| {
         matches!(
             selector.settings.mode,
             SortMode::Numeric | SortMode::HumanNumeric | SortMode::GeneralNumeric
         )
     });
-
     let mut suppress_decimal_warning = false;
     if numeric_used {
         if let Some(sep) = settings.separator {
@@ -2370,31 +1652,29 @@ fn emit_debug_warnings(
                 b'.' => {
                     show_error!(
                         "{}",
-                        translate!("sort-warning-separator-decimal", "sep" => ".")
+                        translate ! ("sort-warning-separator-decimal" , "sep" => ".")
                     );
                     suppress_decimal_warning = true;
                 }
                 b'-' => {
                     show_error!(
                         "{}",
-                        translate!("sort-warning-separator-minus", "sep" => "-")
+                        translate ! ("sort-warning-separator-minus" , "sep" => "-")
                     );
                 }
                 b'+' => {
                     show_error!(
                         "{}",
-                        translate!("sort-warning-separator-plus", "sep" => "+")
+                        translate ! ("sort-warning-separator-plus" , "sep" => "+")
                     );
                 }
                 _ => {}
             }
         }
-
         if !suppress_decimal_warning {
             show_error!("{}", translate!("sort-warning-numbers-use-decimal-point"));
         }
     }
-
     let uses_reverse = settings
         .selectors
         .iter()
@@ -2415,20 +1695,17 @@ fn emit_debug_warnings(
         .selectors
         .iter()
         .any(|selector| selector.settings.ignore_non_printing);
-
     let uses_mode = |mode| {
         settings
             .selectors
             .iter()
             .any(|selector| selector.settings.mode == mode)
     };
-
     let reverse_unused = flags.reverse && !uses_reverse;
     let last_resort_active =
         settings.mode != SortMode::Random && !settings.stable && !settings.unique;
     let reverse_ignored = reverse_unused && !last_resort_active;
     let reverse_last_resort_warning = reverse_unused && last_resort_active;
-
     let mut ignored_opts = String::new();
     if flags.ignore_leading_blanks && !uses_blanks {
         ignored_opts.push('b');
@@ -2463,26 +1740,21 @@ fn emit_debug_warnings(
     if flags.mode_version && !uses_mode(SortMode::Version) {
         ignored_opts.push('V');
     }
-
     if ignored_opts.len() == 1 {
         show_error!(
             "{}",
-            translate!("sort-warning-option-ignored", "option" => ignored_opts)
+            translate ! ("sort-warning-option-ignored" , "option" => ignored_opts)
         );
     } else if ignored_opts.len() > 1 {
         show_error!(
             "{}",
-            translate!("sort-warning-options-ignored", "options" => ignored_opts)
+            translate ! ("sort-warning-options-ignored" , "options" => ignored_opts)
         );
     }
-
     if reverse_last_resort_warning {
         show_error!("{}", translate!("sort-warning-option-reverse-last-resort"));
     }
 }
-
-/// Whether option `id` was given several times with differing values.
-/// Repeating an option is fine as long as every occurrence has the same value.
 fn has_conflicting_values<T>(matches: &ArgMatches, id: &str) -> bool
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -2493,7 +1765,6 @@ where
             .is_some_and(|first| values.any(|value| value != first))
     })
 }
-
 #[uucore::main]
 #[allow(clippy::cognitive_complexity)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
@@ -2501,22 +1772,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         numeric_locale: detect_numeric_locale(),
         ..Default::default()
     };
-
-    // Kept for the caret in `-k` diagnostics, which echoes the command line:
-    // taken before the legacy rewrite, so that a `-k` error in a command that
-    // also used `+POS` shows what was typed rather than the `-k` the rewrite
-    // synthesized.
     let args: Vec<OsString> = args.collect();
     let key_args = uucore::diagnostics::capture(&args);
-
-    // GNU `sort` supports `-t=` to set the field separator to `=`.
-    // Clap strips the first `=` after a short option (see
-    // https://github.com/uutils/coreutils/issues/2424#issuecomment-863825242,
-    // and the same rewrite in `cut`), so rewrite every attached `-t<chars>`
-    // argument to its long form, which preserves the separator verbatim.
     let args = args.into_iter().map(|x| {
-        // Non-UTF-8 separators are rejected later anyway, so lossy conversion
-        // here only affects arguments that cannot become a valid separator.
         let as_str = x.to_string_lossy();
         if as_str.starts_with("-t") && as_str.chars().count() > 2 {
             OsString::from(format!("--{}={}", options::SEPARATOR, &as_str[2..]))
@@ -2525,45 +1783,31 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     });
     let args: Vec<OsString> = args.collect();
-
     let (processed_args, mut legacy_warnings) = preprocess_legacy_args(args);
     if !legacy_warnings.is_empty() {
         index_legacy_warnings(&processed_args, &mut legacy_warnings);
     }
     let matches =
         uucore::clap_localization::handle_clap_result_with_exit_code(uu_app(), processed_args, 2)?;
-
-    // Prevent -o/--output to be specified multiple times
     if has_conflicting_values::<OsString>(&matches, options::OUTPUT) {
         return Err(SortError::MultipleOutputFiles.into());
     }
-
-    // Prevent -t/--field-separator from being given different values. Raw
-    // values suffice: `\0` is the only spelling rewritten later, and argv cannot hold a NUL.
     if has_conflicting_values::<OsString>(&matches, options::SEPARATOR) {
         return Err(SortError::IncompatibleTabs.into());
     }
-
     settings.debug = matches.get_flag(options::DEBUG);
     if let Some(path) = matches.get_one::<OsString>(options::RANDOM_SOURCE) {
         settings.random_source = Some(PathBuf::from(path));
     }
-
-    // check whether user specified a zero terminated list of files for input, otherwise read files from args
     let mut files: Vec<OsString> = if matches.contains_id(options::FILES0_FROM) {
         let files0_from: PathBuf = matches
             .get_one::<OsString>(options::FILES0_FROM)
             .map(Into::into)
             .unwrap_or_default();
-
-        // Cannot combine FILES with FILES0_FROM
         if let Some(s) = matches.get_one::<OsString>(options::FILES) {
             return Err(SortError::FileOperandsCombined { file: s.into() }.into());
         }
-
         let mut files = Vec::new();
-
-        // sort errors with "cannot open: [...]" instead of "cannot read: [...]" here
         let reader = open_with_open_failed_error(&files0_from)?;
         let buf_reader = BufReader::new(reader);
         for (line_num, line_res) in buf_reader.split(b'\0').enumerate() {
@@ -2583,7 +1827,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
             files.push(uucore::os_string_from_vec(line)?);
         }
-
         if files.is_empty() {
             return Err(SortError::EmptyInputFile { file: files0_from }.into());
         }
@@ -2594,7 +1837,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .map(|v| v.map(ToOwned::to_owned).collect())
             .unwrap_or_default()
     };
-
     let mut mode_flags = ModeFlags {
         human_numeric: matches.get_flag(options::modes::HUMAN_NUMERIC),
         month: matches.get_flag(options::modes::MONTH),
@@ -2614,11 +1856,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             _ => {}
         }
     }
-
     let dictionary_order = matches.get_flag(options::DICTIONARY_ORDER);
     let ignore_non_printing = matches.get_flag(options::IGNORE_NONPRINTING);
     let ignore_case = matches.get_flag(options::IGNORE_CASE);
-
     if !matches.contains_id(options::KEY)
         && ordering_incompatible(mode_flags, dictionary_order, ignore_non_printing)
     {
@@ -2630,28 +1870,23 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         );
         return Err(incompatible_options_error(&opts));
     }
-
     settings.mode = mode_flags.to_mode();
     if mode_flags.random {
         settings.salt = Some(get_rand_string());
     }
-
     settings.dictionary_order = dictionary_order;
     settings.ignore_non_printing = ignore_non_printing;
     settings.ignore_case = ignore_case;
-
     let threads = match matches.get_one::<String>(options::PARALLEL) {
         Some(value) => parse_parallel(value)?,
         None => std::thread::available_parallelism().map_or(1, |n| n.get() as u64),
     };
-    // WASI doesn't support threads, so the value is only validated there
     #[cfg(not(target_os = "wasi"))]
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(threads as usize)
         .build_global();
     #[cfg(target_os = "wasi")]
     let _ = threads;
-
     if let Some(size_str) = matches.get_one::<String>(options::BUF_SIZE) {
         settings.buffer_size = GlobalSettings::parse_byte_count(size_str).map_err(|error| {
             let message = format_error_message(&error, size_str, options::BUF_SIZE);
@@ -2668,12 +1903,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         settings.buffer_size = automatic_buffer_size(&files);
         settings.buffer_size_is_explicit = false;
     }
-
     let mut tmp_dir = TmpDirWrapper::new(matches.get_one::<String>(options::TMP_DIR).map_or_else(
         || {
-            // WASI does not support std::env::temp_dir() — it panics with
-            // "no filesystem on wasm". Use /tmp as a nominal fallback;
-            // the WASI ext_sort path never actually creates temp files.
             #[cfg(target_os = "wasi")]
             {
                 PathBuf::from("/tmp")
@@ -2685,35 +1916,30 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         },
         PathBuf::from,
     ));
-
     settings.compress_prog = matches
         .get_one::<String>(options::COMPRESS_PROG)
         .map(String::from);
-
     if let Some(n_merge) = matches.get_one::<String>(options::BATCH_SIZE) {
-        // `None` means the value does not even fit in a `usize`, which is always too large.
         let parsed_value = match n_merge.parse::<usize>() {
             Ok(parsed_value) => Some(parsed_value),
             Err(e) if *e.kind() == IntErrorKind::PosOverflow => None,
             Err(_) => {
                 return Err(UUsageError::new(
                     2,
-                    translate!("sort-invalid-batch-size-arg", "arg" => n_merge),
+                    translate ! ("sort-invalid-batch-size-arg" , "arg" => n_merge),
                 ));
             }
         };
-
         if parsed_value.is_some_and(|value| value < 2) {
             show_error!(
                 "{}",
-                translate!("sort-invalid-batch-size-arg", "arg" => n_merge)
+                translate ! ("sort-invalid-batch-size-arg" , "arg" => n_merge)
             );
             return Err(UUsageError::new(
                 2,
                 translate!("sort-minimum-batch-size-two"),
             ));
         }
-
         let max_batch_size = max_merge_batch_size();
         let too_large = match (parsed_value, max_batch_size) {
             (None, _) => true,
@@ -2721,26 +1947,21 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             (Some(_), None) => false,
         };
         if too_large {
-            let batch_too_large = translate!(
-                "sort-batch-size-too-large",
-                "arg" => n_merge.quote()
-            );
+            let batch_too_large =
+                translate ! ("sort-batch-size-too-large" , "arg" => n_merge . quote ());
             let error_message = match max_batch_size {
                 Some(max) => {
                     show_error!("{batch_too_large}");
-                    translate!("sort-maximum-batch-size-rlimit", "rlimit" => max)
+                    translate ! ("sort-maximum-batch-size-rlimit" , "rlimit" => max)
                 }
                 None => batch_too_large,
             };
             return Err(UUsageError::new(2, error_message));
         }
-
         settings.merge_batch_size = parsed_value.unwrap_or(usize::MAX);
     }
-
     settings.line_ending = LineEnding::from_zero_flag(matches.get_flag(options::ZERO_TERMINATED));
     settings.merge = matches.get_flag(options::MERGE);
-
     settings.check = matches.contains_id(options::check::CHECK);
     if settings.check && matches.get_flag(options::check::CHECK_SILENT) {
         return Err(incompatible_options_error("cC"));
@@ -2756,50 +1977,40 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         settings.check_silent = true;
         settings.check = true;
     }
-
     if matches.contains_id(options::OUTPUT) && settings.check {
         let opts = if settings.check_silent { "Co" } else { "co" };
         return Err(incompatible_options_error(opts));
     }
-
     settings.ignore_leading_blanks = matches.get_flag(options::IGNORE_LEADING_BLANKS);
-
     settings.reverse = matches.get_flag(options::REVERSE);
     settings.stable = matches.get_flag(options::STABLE);
     settings.unique = matches.get_flag(options::UNIQUE);
-
     if files.is_empty() {
-        /* if no file, default to stdin */
         files.push(OsString::from(STDIN_FILE));
     } else if settings.check && files.len() != 1 {
         return Err(UUsageError::new(
             2,
-            translate_text!("sort-extra-operand-not-allowed-with-c", "operand" => files[1].quote()),
+            translate_text ! ("sort-extra-operand-not-allowed-with-c" , "operand" => files [1] . quote ()),
         ));
     }
-
     if let Some(arg) = matches.get_one::<OsString>(options::SEPARATOR) {
         let mut separator = arg.to_str().ok_or_else(|| {
             UUsageError::new(
                 2,
-                translate!("sort-separator-not-valid-unicode", "arg" => arg.quote()),
+                translate ! ("sort-separator-not-valid-unicode" , "arg" => arg . quote ()),
             )
         })?;
         if separator == "\\0" {
             separator = "\0";
         }
-        // This rejects non-ASCII codepoints, but perhaps we don't have to.
-        // On the other hand GNU accepts any single byte, valid unicode or not.
-        // (Supporting multi-byte chars would require changes in tokenize_with_separator().)
         let &[sep_char] = separator.as_bytes() else {
             return Err(UUsageError::new(
                 2,
-                translate!("sort-separator-must-be-one-char", "separator" => separator.quote()),
+                translate ! ("sort-separator-must-be-one-char" , "separator" => separator . quote ()),
             ));
         };
         settings.separator = Some(sep_char);
     }
-
     if let Some(values) = matches.get_many::<String>(options::KEY) {
         for value in values {
             let selector = match FieldSelector::parse(value, &settings) {
@@ -2815,9 +2026,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             settings.selectors.push(selector);
         }
     }
-
     if !matches.contains_id(options::KEY) {
-        // add a default selector matching the whole line
         let key_settings = KeySettings::from(&settings);
         settings.selectors.push(FieldSelector::new(
             KeyPosition {
@@ -2829,7 +2038,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             key_settings,
         ));
     }
-
     let needs_random = settings.mode == SortMode::Random
         || settings
             .selectors
@@ -2841,35 +2049,23 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             None => get_rand_string(),
         });
     }
-
     if !(settings.merge || settings.check) {
         check_inputs(&files)?;
     }
-
     let output = Output::new(matches.get_one::<OsString>(options::OUTPUT))?;
-
     if settings.debug {
         let global_flags = GlobalOptionFlags::from_matches(&matches);
         emit_debug_warnings(&settings, &global_flags, &legacy_warnings);
     }
-
-    // Initialize locale collation if needed (UTF-8 locales)
-    // This MUST happen before init_precomputed() to avoid the performance regression
     #[cfg(feature = "i18n-collator")]
     let needs_locale_collation = i18n::collator::init_locale_collation();
-
     #[cfg(not(feature = "i18n-collator"))]
     let needs_locale_collation = false;
-
     settings.init_precomputed(needs_locale_collation);
-
     let result = exec(&mut files, &settings, output, &mut tmp_dir);
-    // Wait here if `SIGINT` was received,
-    // for signal handler to do its work and terminate the program.
     tmp_dir.wait_if_signal();
     result
 }
-
 pub fn uu_app() -> Command {
     uucore::clap_localization::configure_localized_command(
         Command::new("sort")
@@ -3009,7 +2205,6 @@ pub fn uu_app() -> Command {
             .value_hint(clap::ValueHint::FilePath)
             .num_args(1)
             .allow_hyphen_values(true)
-            // To detect multiple occurrences and raise an error
             .action(ArgAction::Append),
     )
     .arg(
@@ -3047,7 +2242,6 @@ pub fn uu_app() -> Command {
             .long(options::SEPARATOR)
             .help(translate!("sort-help-separator"))
             .value_parser(ValueParser::os_string())
-            // To detect differing occurrences and raise an error
             .action(ArgAction::Append),
     )
     .arg(
@@ -3113,16 +2307,12 @@ pub fn uu_app() -> Command {
             .value_hint(clap::ValueHint::FilePath),
     )
 }
-
 fn exec(
     files: &mut [OsString],
     settings: &GlobalSettings,
     output: Output,
     tmp_dir: &mut TmpDirWrapper,
 ) -> UResult<()> {
-    // GNU: --check takes precedence over --merge when both are given.
-    // With one file, check still runs; with multiple files, the earlier
-    // "extra operand … not allowed with -c" error already fired.
     if settings.check {
         if files.len() > 1 {
             Err(UUsageError::new(
@@ -3135,108 +2325,31 @@ fn exec(
     } else if settings.merge {
         merge::merge(files, settings, output, tmp_dir).map_err(Into::into)
     } else {
-        // Open each input once, when it is reached, so that only one input is open
-        // at a time and FIFOs are never reopened.
         let mut lines = files.iter().map(open).map(|file| file.map_err(Into::into));
         ext_sort(&mut lines, settings, output, tmp_dir).map_err(Into::into)
     }
 }
-
-#[cfg(verus_keep_ghost)]
-#[verus_verify]
 pub struct SortComparator<'s, 'a> {
     pub settings: &'s GlobalSettings,
     pub line_data: &'s LineData<'a>,
 }
-
-#[cfg(verus_keep_ghost)]
-verus! {
-    impl<'s, 'a> crate::proof::unwind::Comparator<Line<'a>> for SortComparator<'s, 'a> {
-        open spec fn valid(&self, line: Line<'a>) -> bool {
-            crate::proof::native_settings_valid(self.settings)
-                && crate::proof::cached_line(&line, self.settings, self.line_data)
-        }
-        open spec fn view(&self, line: Line<'a>) -> Seq<u8> {
-            crate::proof::sorting::native_line(&line)
-        }
-        open spec fn model(&self) -> crate::proof::sorting::Comparator {
-            crate::proof::sorting::native_compare(self.settings)
-        }
-        fn compare(&self, a: &Line<'a>, b: &Line<'a>) -> Ordering {
-            compare_by(a, b, self.settings, self.line_data, self.line_data)
-        }
+impl<'s, 'a> crate::proof::unwind::Comparator<Line<'a>> for SortComparator<'s, 'a> {
+    fn compare(&self, a: &Line<'a>, b: &Line<'a>) -> Ordering {
+        compare_by(a, b, self.settings, self.line_data, self.line_data)
     }
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(
-    requires crate::proof::native_settings_valid(settings), crate::trusted::unwind::rayon_ready(),
-        forall|i: int| #![auto] 0 <= i < old(unsorted).len() ==>
-            crate::proof::cached_line(&old(unsorted)@[i], settings, line_data),
-    ensures final(unsorted)@.to_multiset() == old(unsorted)@.to_multiset(),
-        crate::proof::sorting::sorting_result(
-            crate::proof::sorting::native_owned(old(unsorted)@),
-            crate::proof::sorting::native_owned(final(unsorted)@),
-            settings.stable || settings.unique, crate::proof::sorting::native_compare(settings)),
-    no_unwind
-))]
 fn sort_by<'a>(unsorted: &mut Vec<Line<'a>>, settings: &GlobalSettings, line_data: &LineData<'a>) {
-    #[cfg(verus_keep_ghost)]
-    proof_decl! { let ghost original = unsorted@; }
-    #[cfg(not(verus_keep_ghost))]
-    let cmp = |a: &Line<'a>, b: &Line<'a>| compare_by(a, b, settings, line_data, line_data);
-    #[cfg(verus_keep_ghost)]
-    let cmp = SortComparator { settings, line_data };
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        crate::proof::native_settings_facts(settings);
-        crate::proof::sorting::native_compare_model(settings);
-        crate::proof::comparisons::order_lawful(&settings.specification@->Some_0);
-    }
-    // WASI does not support threads, so use non-parallel sort to avoid
-    // rayon's thread pool which triggers an unreachable trap.
+    let cmp = SortComparator {
+        settings,
+        line_data,
+    };
     if settings.stable || settings.unique {
-        #[cfg(all(not(verus_keep_ghost), not(target_os = "wasi")))]
-        unsorted.par_sort_by(cmp);
-        #[cfg(all(not(verus_keep_ghost), target_os = "wasi"))]
-        unsorted.sort_by(cmp);
-        #[cfg(verus_keep_ghost)]
         crate::trusted::unwind::sort_values(unsorted, true, &cmp);
     } else {
-        #[cfg(all(not(verus_keep_ghost), not(target_os = "wasi")))]
-        unsorted.par_sort_unstable_by(cmp);
-        #[cfg(all(not(verus_keep_ghost), target_os = "wasi"))]
-        unsorted.sort_unstable_by(cmp);
-        #[cfg(verus_keep_ghost)]
         crate::trusted::unwind::sort_values(unsorted, false, &cmp);
     }
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        assert(original.map_values(|line: Line<'a>| cmp.view(line))
-            =~= crate::proof::sorting::native_owned(original));
-        assert(unsorted@.map_values(|line: Line<'a>| cmp.view(line))
-            =~= crate::proof::sorting::native_owned(unsorted@));
-    }
 }
-
-/// Comparison used by the merge path.
-///
-/// This is result-identical to `compare_by`, but for the whole-line locale-collation
-/// case it compares the two lines lazily with the ICU collator instead of relying on
-/// precomputed collation keys. Merging only performs O(n log k) comparisons (and none at
-/// all when merging a single file), so computing a full sort key for every line — as the
-/// regular sort path does to amortize O(n log n) comparisons — is pure overhead here.
-/// Skipping that per-line work (see `merge_without_limit`) is what makes `sort -m` of
-/// already-sorted input fast.
 #[inline]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::native_settings_valid(settings),
-        crate::proof::cached_line(a, settings, a_line_data),
-        crate::proof::cached_line(b, settings, b_line_data),
-    ensures result == crate::proof::sorting::native_compare(settings)(
-        crate::proof::sorting::native_line(a), crate::proof::sorting::native_line(b)),
-))]
 pub fn merge_compare<'a>(
     a: &Line<'a>,
     b: &Line<'a>,
@@ -3244,41 +2357,21 @@ pub fn merge_compare<'a>(
     a_line_data: &LineData<'a>,
     b_line_data: &LineData<'a>,
 ) -> Ordering {
-    #[cfg(verus_keep_ghost)]
-    proof! { crate::proof::sorting::native_line_value(a); crate::proof::sorting::native_line_value(b); }
     #[cfg(feature = "i18n-collator")]
     if settings.precomputed.fast_locale_collation {
         return compare_lines_with_collator(a, b, settings);
     }
     compare_by(a, b, settings, a_line_data, b_line_data)
 }
-
-/// Lazy counterpart of the `fast_locale_collation` branch of `compare_by`: compare the
-/// line bytes directly rather than precomputed keys. `locale_cmp` (ICU `compare_utf8`)
-/// and the sort-key comparison agree on ordering by construction.
-///
-/// Kept out of line so that `merge_compare` stays small enough to be inlined into the
-/// merge heap's comparator, which keeps the non-locale merge paths as fast as before.
 #[cfg(feature = "i18n-collator")]
 #[inline(never)]
 fn compare_lines_with_collator(a: &Line<'_>, b: &Line<'_>, settings: &GlobalSettings) -> Ordering {
     let mut cmp = locale_cmp(a.line, b.line);
     if cmp == Ordering::Equal {
-        // Equal keys for inputs like `01` and `0_1`; fall back to (reversed) byte order.
         cmp = b.line.cmp(a.line);
     }
     if settings.reverse { cmp.reverse() } else { cmp }
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::native_settings_valid(global_settings),
-        crate::proof::cached_line(a, global_settings, a_line_data),
-        crate::proof::cached_line(b, global_settings, b_line_data),
-    ensures result == crate::proof::sorting::native_compare(global_settings)(
-        crate::proof::sorting::native_line(a), crate::proof::sorting::native_line(b)),
-    no_unwind
-))]
 fn compare_by<'a>(
     a: &Line<'a>,
     b: &Line<'a>,
@@ -3286,44 +2379,20 @@ fn compare_by<'a>(
     a_line_data: &LineData<'a>,
     b_line_data: &LineData<'a>,
 ) -> Ordering {
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        crate::proof::native_settings_facts(global_settings);
-        crate::proof::cached_line_facts(a, global_settings, a_line_data);
-        crate::proof::cached_line_facts(b, global_settings, b_line_data);
-        crate::proof::sorting::native_line_value(a);
-        crate::proof::sorting::native_line_value(b);
-        crate::proof::sorting::native_compare_model(global_settings);
-        crate::proof::comparisons::native::model_alignment(a.line@, b.line@, global_settings);
-    }
     if global_settings.precomputed.fast_lexicographic {
-        #[cfg(not(verus_keep_ghost))]
-        let cmp = a.line.cmp(b.line);
-        #[cfg(verus_keep_ghost)]
         let cmp = crate::trusted::compare_byte_slices(a.line, b.line);
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            assert(crate::proof::mapped_case(a.line@, false) =~= a.line@);
-            assert(crate::proof::mapped_case(b.line@, false) =~= b.line@);
-            crate::proof::byte_order_equal(a.line@, b.line@);
-            comparison_proof::fast_text(a.line@, b.line@, global_settings, false);
-        }
         return if global_settings.reverse {
             cmp.reverse()
         } else {
             cmp
         };
     }
-
     #[cfg(feature = "i18n-collator")]
     if global_settings.precomputed.fast_locale_collation {
         let a_key = a_line_data.collation_key(a.index);
         let b_key = b_line_data.collation_key(b.index);
         let mut cmp = a_key.cmp(b_key);
-        // If collation keys are equal, fall back to lexicographic comparison
-        // This can be the case for inputs like `01` and `0_1`, which have equal keys
         if cmp == Ordering::Equal {
-            // Reversing the order to match sort's sorting behaviour
             cmp = b.line.cmp(a.line);
         }
         return if global_settings.reverse {
@@ -3332,20 +2401,11 @@ fn compare_by<'a>(
             cmp
         };
     }
-
     if global_settings.precomputed.fast_ascii_insensitive {
         let cmp = ascii_case_insensitive_cmp(a.line, b.line);
         if !matches!(cmp, Ordering::Equal) || {
-            #[cfg(not(verus_keep_ghost))]
-            { a.line == b.line }
-            #[cfg(verus_keep_ghost)]
             { crate::trusted::comparisons::equal_bytes(a.line, b.line) }
         } {
-            #[cfg(verus_keep_ghost)]
-            proof! {
-                if cmp == Ordering::Equal { assert(a.line@ =~= b.line@); }
-                comparison_proof::fast_text(a.line@, b.line@, global_settings, true);
-            }
             return if global_settings.reverse {
                 cmp.reverse()
             } else {
@@ -3353,39 +2413,19 @@ fn compare_by<'a>(
             };
         }
     }
-
     let mut selection_index = 0;
     let mut num_info_index = 0;
     let mut parsed_float_index = 0;
-
-    #[cfg(not(verus_keep_ghost))]
-    let hints = (
-        a_line_data.line_num_floats.get(a.index),
-        b_line_data.line_num_floats.get(b.index),
-    );
-    #[cfg(verus_keep_ghost)]
     let hints = (
         crate::trusted::comparisons::vec_get(&a_line_data.line_num_floats, a.index),
         crate::trusted::comparisons::vec_get(&b_line_data.line_num_floats, b.index),
     );
     if let (Some(Some(a_f64)), Some(Some(b_f64))) = hints {
-        // we don't use total_cmp() because it always sorts -0 before 0
-        #[cfg(not(verus_keep_ghost))]
-        let float_order = a_f64.partial_cmp(b_f64);
-        #[cfg(verus_keep_ghost)]
         let float_order = crate::trusted::comparisons::float_partial_cmp(a_f64, b_f64);
         if let Some(cmp) = float_order {
-            // don't trust `Ordering::Equal` if lines are not fully equal
             if !matches!(cmp, Ordering::Equal) || {
-                #[cfg(not(verus_keep_ghost))]
-                { a.line == b.line }
-                #[cfg(verus_keep_ghost)]
                 { crate::trusted::comparisons::equal_bytes(a.line, b.line) }
             } {
-                #[cfg(verus_keep_ghost)]
-                proof! {
-                    comparison_proof::fast_numeric(a.line@, b.line@, global_settings, *a_f64, *b_f64, cmp);
-                }
                 return if global_settings.reverse {
                     cmp.reverse()
                 } else {
@@ -3394,164 +2434,66 @@ fn compare_by<'a>(
             }
         }
     }
-
-    #[cfg(not(verus_keep_ghost))]
-    let mut selectors_iter = global_settings.selectors.iter();
-    #[cfg(verus_keep_ghost)]
     let mut selectors_iter = crate::trusted::comparisons::vec_refs(&global_settings.selectors);
-    #[cfg(verus_keep_ghost)]
     let mut selector_index = 0usize;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant selectors_iter.values() == global_settings.selectors@,
-            selectors_iter.index() == selector_index,
-            selector_index <= global_settings.selectors.len(),
-            crate::proof::native_settings_valid(global_settings),
-            crate::proof::cache_contents(a, global_settings, a_line_data),
-            crate::proof::cache_contents(b, global_settings, b_line_data),
-            crate::proof::cached_line(a, global_settings, a_line_data),
-            crate::proof::cached_line(b, global_settings, b_line_data),
-            selection_index == crate::proof::cache_index(global_settings, 0, selector_index as int, 0),
-            num_info_index == crate::proof::cache_index(global_settings, 0, selector_index as int, 1),
-            parsed_float_index == crate::proof::cache_index(global_settings, 0, selector_index as int, 2),
-            comparison_proof::primary(a.line@, b.line@, global_settings, 0)
-                == comparison_proof::primary(a.line@, b.line@, global_settings, selector_index as int),
-        ensures selector_index == global_settings.selectors.len(),
-        decreases global_settings.selectors.len() - selector_index,
-    ))]
     while let Some(selector) = selectors_iter.next() {
-        #[cfg(verus_keep_ghost)]
-        proof_decl! {
-            let ghost selector_i = selector_index as int;
-            let ghost raw_a = crate::proof::native_selected(a.line@, selector, global_settings.separator);
-            let ghost raw_b = crate::proof::native_selected(b.line@, selector, global_settings.separator);
-        }
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            crate::proof::native_settings_facts(global_settings);
-            crate::proof::sorting::cache_counts(global_settings);
-            comparison_proof::selector_supported(global_settings, selector_i);
-            comparison_proof::primary_step(a.line@, b.line@, global_settings, selector_i);
-            comparison_proof::counter_step(global_settings, selector_i, 0);
-            comparison_proof::counter_step(global_settings, selector_i, 1);
-            comparison_proof::counter_step(global_settings, selector_i, 2);
-            comparison_proof::cached_indices(a, global_settings, a_line_data, selector_i);
-            comparison_proof::cached_indices(b, global_settings, b_line_data, selector_i);
-        }
         let (a_str, b_str) = if selector.needs_selection {
-            #[cfg(not(verus_keep_ghost))]
             let selections = (
-                a_line_data.selections
-                    [a.index * global_settings.precomputed.selections_per_line + selection_index],
-                b_line_data.selections
-                    [b.index * global_settings.precomputed.selections_per_line + selection_index],
-            );
-            #[cfg(verus_keep_ghost)]
-            let selections = (
-                *crate::trusted::comparisons::vec_at(&a_line_data.selections,
-                    a.index * global_settings.precomputed.selections_per_line + selection_index),
-                *crate::trusted::comparisons::vec_at(&b_line_data.selections,
-                    b.index * global_settings.precomputed.selections_per_line + selection_index),
+                *crate::trusted::comparisons::vec_at(
+                    &a_line_data.selections,
+                    a.index * global_settings.precomputed.selections_per_line + selection_index,
+                ),
+                *crate::trusted::comparisons::vec_at(
+                    &b_line_data.selections,
+                    b.index * global_settings.precomputed.selections_per_line + selection_index,
+                ),
             );
             selection_index += 1;
             selections
         } else {
-            // We can select the whole line.
             (a.line, b.line)
         };
-
         let settings = &selector.settings;
-
         let cmp: Ordering = match settings.mode {
-            #[cfg(not(verus_keep_ghost))]
-            SortMode::Random => {
-                // check if the two strings are equal
-                if custom_str_cmp(
-                    a_str,
-                    b_str,
-                    settings.ignore_non_printing,
-                    settings.dictionary_order,
-                    settings.ignore_case,
-                ) == Ordering::Equal
-                {
-                    Ordering::Equal
-                } else {
-                    // Only if they are not equal compare by the hash
-                    random_shuffle(a_str, b_str, &global_settings.salt.unwrap())
-                }
-            }
             SortMode::Numeric => {
-                #[cfg(not(verus_keep_ghost))]
-                let a_num_info = &a_line_data.num_infos
-                    [a.index * global_settings.precomputed.num_infos_per_line + num_info_index];
-                #[cfg(not(verus_keep_ghost))]
-                let b_num_info = &b_line_data.num_infos
-                    [b.index * global_settings.precomputed.num_infos_per_line + num_info_index];
-                #[cfg(verus_keep_ghost)]
-                let a_num_info = crate::trusted::comparisons::vec_at(&a_line_data.num_infos,
-                    a.index * global_settings.precomputed.num_infos_per_line + num_info_index);
-                #[cfg(verus_keep_ghost)]
-                let b_num_info = crate::trusted::comparisons::vec_at(&b_line_data.num_infos,
-                    b.index * global_settings.precomputed.num_infos_per_line + num_info_index);
+                let a_num_info = crate::trusted::comparisons::vec_at(
+                    &a_line_data.num_infos,
+                    a.index * global_settings.precomputed.num_infos_per_line + num_info_index,
+                );
+                let b_num_info = crate::trusted::comparisons::vec_at(
+                    &b_line_data.num_infos,
+                    b.index * global_settings.precomputed.num_infos_per_line + num_info_index,
+                );
                 num_info_index += 1;
-                #[cfg(verus_keep_ghost)]
-                proof! {
-                    crate::proof::parsing::decimal_valid(raw_a, false, settings.ignore_case);
-                    crate::proof::parsing::decimal_valid(raw_b, false, settings.ignore_case);
-                    crate::proof::comparisons::native_numeric_decimal(a_str@, a_num_info.exponent as int,
-                        a_num_info.sign is Negative, crate::proof::comparisons::decimal_model(raw_a, false, false),
-                        b_str@, b_num_info.exponent as int, b_num_info.sign is Negative,
-                        crate::proof::comparisons::decimal_model(raw_b, false, false));
-                }
                 numeric_str_cmp((a_str, a_num_info), (b_str, b_num_info))
             }
             SortMode::HumanNumeric => {
-                #[cfg(not(verus_keep_ghost))]
-                let a_num_info = &a_line_data.num_infos
-                    [a.index * global_settings.precomputed.num_infos_per_line + num_info_index];
-                #[cfg(not(verus_keep_ghost))]
-                let b_num_info = &b_line_data.num_infos
-                    [b.index * global_settings.precomputed.num_infos_per_line + num_info_index];
-                #[cfg(verus_keep_ghost)]
-                let a_num_info = crate::trusted::comparisons::vec_at(&a_line_data.num_infos,
-                    a.index * global_settings.precomputed.num_infos_per_line + num_info_index);
-                #[cfg(verus_keep_ghost)]
-                let b_num_info = crate::trusted::comparisons::vec_at(&b_line_data.num_infos,
-                    b.index * global_settings.precomputed.num_infos_per_line + num_info_index);
+                let a_num_info = crate::trusted::comparisons::vec_at(
+                    &a_line_data.num_infos,
+                    a.index * global_settings.precomputed.num_infos_per_line + num_info_index,
+                );
+                let b_num_info = crate::trusted::comparisons::vec_at(
+                    &b_line_data.num_infos,
+                    b.index * global_settings.precomputed.num_infos_per_line + num_info_index,
+                );
                 num_info_index += 1;
-                #[cfg(verus_keep_ghost)]
-                proof! {
-                    crate::proof::parsing::decimal_valid(raw_a, true, settings.ignore_case);
-                    crate::proof::parsing::decimal_valid(raw_b, true, settings.ignore_case);
-                    crate::proof::comparisons::native_human_matches(a_str@, a_num_info.exponent as int,
-                        a_num_info.sign is Negative, crate::proof::comparisons::decimal_model(raw_a, true, settings.ignore_case),
-                        b_str@, b_num_info.exponent as int, b_num_info.sign is Negative,
-                        crate::proof::comparisons::decimal_model(raw_b, true, settings.ignore_case));
-                }
                 human_numeric_str_cmp((a_str, a_num_info), (b_str, b_num_info))
             }
             SortMode::GeneralNumeric => {
-                #[cfg(not(verus_keep_ghost))]
-                let a_float = &a_line_data.parsed_floats
-                    [a.index * global_settings.precomputed.floats_per_line + parsed_float_index];
-                #[cfg(not(verus_keep_ghost))]
-                let b_float = &b_line_data.parsed_floats
-                    [b.index * global_settings.precomputed.floats_per_line + parsed_float_index];
-                #[cfg(verus_keep_ghost)]
-                let a_float = crate::trusted::comparisons::vec_at(&a_line_data.parsed_floats,
-                    a.index * global_settings.precomputed.floats_per_line + parsed_float_index);
-                #[cfg(verus_keep_ghost)]
-                let b_float = crate::trusted::comparisons::vec_at(&b_line_data.parsed_floats,
-                    b.index * global_settings.precomputed.floats_per_line + parsed_float_index);
+                let a_float = crate::trusted::comparisons::vec_at(
+                    &a_line_data.parsed_floats,
+                    a.index * global_settings.precomputed.floats_per_line + parsed_float_index,
+                );
+                let b_float = crate::trusted::comparisons::vec_at(
+                    &b_line_data.parsed_floats,
+                    b.index * global_settings.precomputed.floats_per_line + parsed_float_index,
+                );
                 parsed_float_index += 1;
                 general_numeric_compare(a_float, b_float)
             }
             SortMode::Month => month_compare(a_str, b_str),
-            #[cfg(not(verus_keep_ghost))]
-            SortMode::Version => version_cmp(a_str, b_str),
-            #[cfg(verus_keep_ghost)]
-            SortMode::Version | SortMode::Random => { proof! { assert(false); } Ordering::Equal },
+            SortMode::Version | SortMode::Random => Ordering::Equal,
             SortMode::Default => {
-                // Use locale-aware comparison if feature is enabled and no custom flags are set
                 #[cfg(feature = "i18n-collator")]
                 {
                     if settings.ignore_case
@@ -3581,102 +2523,40 @@ fn compare_by<'a>(
                 }
             }
         };
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            reveal(crate::proof::comparisons::key_base_model);
-            assert(crate::proof::comparisons::reverse_if_model(cmp, settings.reverse)
-                == comparison_proof::selector_order(a.line@, b.line@, selector, global_settings.separator));
-            comparison_proof::model_alignment(a.line@, b.line@, global_settings);
-            crate::proof::sorting::native_compare_model(global_settings);
-            crate::proof::sorting::native_line_value(a);
-            crate::proof::sorting::native_line_value(b);
-        }
         if !matches!(cmp, Ordering::Equal) {
             return if settings.reverse { cmp.reverse() } else { cmp };
         }
-        #[cfg(verus_keep_ghost)]
-        { selector_index += 1; }
+        {
+            selector_index += 1;
+        }
     }
-
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        comparison_proof::primary_step(a.line@, b.line@, global_settings, global_settings.selectors.len() as int);
-        comparison_proof::model_alignment(a.line@, b.line@, global_settings);
-        crate::proof::sorting::native_compare_model(global_settings);
-        crate::proof::sorting::native_line_value(a);
-        crate::proof::sorting::native_line_value(b);
-    }
-
-    // Call "last resort compare" if all selectors returned Equal
     let cmp = if matches!(global_settings.mode, SortMode::Random)
         || global_settings.stable
         || global_settings.unique
     {
         Ordering::Equal
     } else {
-        #[cfg(not(verus_keep_ghost))]
-        { a.line.cmp(b.line) }
-        #[cfg(verus_keep_ghost)]
         { crate::trusted::compare_byte_slices(a.line, b.line) }
     };
-
     if global_settings.reverse {
         cmp.reverse()
     } else {
         cmp
     }
 }
-
 #[inline]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    ensures result == crate::proof::ascii_upper(byte),
-    no_unwind
-))]
 fn fold(byte: u8) -> u8 {
     byte.to_ascii_uppercase()
 }
-
-/// Compare two byte slices in ASCII case-insensitive order without allocating.
-/// We upper each byte on the fly so that binary input (including `NUL`) stays
-/// untouched and we avoid locale-sensitive routines such as `strcasecmp`.
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    ensures result == crate::proof::byte_order(
-        crate::proof::mapped_case(a@, true), crate::proof::mapped_case(b@, true)),
-    no_unwind
-))]
 fn ascii_case_insensitive_cmp(a: &[u8], b: &[u8]) -> Ordering {
-    #[cfg(not(verus_keep_ghost))]
-    let pairs = a.iter().copied().zip(b.iter().copied());
-    #[cfg(not(verus_keep_ghost))]
-    for (lhs, rhs) in pairs {
-        let l = fold(lhs);
-        let r = fold(rhs);
-        if l != r {
-            return l.cmp(&r);
-        }
-    }
-    #[cfg(not(verus_keep_ghost))]
-    { a.len().cmp(&b.len()) }
-    #[cfg(verus_keep_ghost)]
     {
         let a_len = crate::trusted::comparisons::slice_len(a);
         let b_len = crate::trusted::comparisons::slice_len(b);
         let mut index = 0usize;
-        proof! { assert(a@.skip(0) =~= a@); assert(b@.skip(0) =~= b@); }
-        #[verus_spec(invariant index <= a_len, index <= b_len,
-            a_len == a.len(), b_len == b.len(),
-            crate::proof::byte_order(crate::proof::mapped_case(a@, true), crate::proof::mapped_case(b@, true))
-                == crate::proof::byte_order(crate::proof::mapped_case(a@.skip(index as int), true),
-                    crate::proof::mapped_case(b@.skip(index as int), true)),
-            decreases a_len - index,
-        )]
         while index < a_len && index < b_len {
             let l = fold(*crate::trusted::comparisons::slice_at(a, index));
             let r = fold(*crate::trusted::comparisons::slice_at(b, index));
-            proof! { crate::proof::folded_step(a@, b@, index as int); }
             if l != r {
-                proof! { crate::proof::byte_order_singleton(l, r); }
                 return crate::trusted::comparisons::cmp_u8(l, r);
             }
             index += 1;
@@ -3684,111 +2564,39 @@ fn ascii_case_insensitive_cmp(a: &[u8], b: &[u8]) -> Ordering {
         crate::trusted::comparisons::cmp_usize(a_len, b_len)
     }
 }
-
-// This function cleans up the initial comparison done by leading_num_common for a general numeric compare.
-// In contrast to numeric compare, GNU general numeric/FP sort *should* recognize positive signs and
-// scientific notation, so we strip those lines only after the end of the following numeric string.
-// For example, 5e10KFD would be 5e10 or 5x10^10 and +10000HFKJFK would become 10000.
 #[allow(clippy::cognitive_complexity)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires decimal_pt == b'.',
-    ensures result.start <= result.end <= inp.len(),
-        inp@.subrange(result.start as int, result.end as int)
-            == crate::proof::comparisons::general_prefix_model(inp@),
-))]
 fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
-    // check for inf, -inf and nan
-    #[cfg(not(verus_keep_ghost))]
-    let allowed_prefixes: &[&[u8]] = &[b"inf", b"-inf", b"nan"];
-    #[cfg(verus_keep_ghost)]
-    let allowed_prefixes: &[&[u8]] = &[&[b'i', b'n', b'f'], &[b'-', b'i', b'n', b'f'], &[b'n', b'a', b'n']];
-
-    #[cfg(not(verus_keep_ghost))]
-    let trimmed = inp.trim_ascii_start();
-    #[cfg(verus_keep_ghost)]
+    let allowed_prefixes: &[&[u8]] = &[
+        &[b'i', b'n', b'f'],
+        &[b'-', b'i', b'n', b'f'],
+        &[b'n', b'a', b'n'],
+    ];
     let trimmed = crate::trusted::comparisons::trim_ascii_start(inp);
     let leading_whitespace_len = inp.len() - trimmed.len();
-
-    #[cfg_attr(verus_keep_ghost, verus_spec(state =>
-        invariant state.index() <= 3,
-            state.seq().len() == 3,
-            forall|i: int| #![auto] 0 <= i < 3 ==> state.seq()[i]@ == crate::proof::comparisons::prefix_word(i),
-            trimmed@ == inp@.skip(leading_whitespace_len as int),
-            leading_whitespace_len == crate::proof::comparisons::leading_white(inp@, 0),
-            leading_whitespace_len + trimmed.len() == inp.len(),
-            leading_whitespace_len <= inp.len(),
-            crate::proof::comparisons::special_prefix(trimmed@)
-                == crate::proof::comparisons::special_from(trimmed@, state.index()),
-    ))]
     for allowed_prefix_ref in allowed_prefixes {
         let allowed_prefix = *allowed_prefix_ref;
-        #[cfg(verus_keep_ghost)]
-        proof! { crate::proof::comparisons::special_step(trimmed@, state.index()); }
-        #[cfg(not(verus_keep_ghost))]
         let matches = trimmed.len() >= allowed_prefix.len()
-            && trimmed[..allowed_prefix.len()].eq_ignore_ascii_case(allowed_prefix);
-        #[cfg(verus_keep_ghost)]
-        let matches = trimmed.len() >= allowed_prefix.len()
-            && crate::trusted::comparisons::equal_folded(&trimmed[..allowed_prefix.len()], allowed_prefix);
+            && crate::trusted::comparisons::equal_folded(
+                &trimmed[..allowed_prefix.len()],
+                allowed_prefix,
+            );
         if matches {
-            #[cfg(verus_keep_ghost)]
-            proof! {
-                assert(inp@.subrange(leading_whitespace_len as int,
-                    (leading_whitespace_len + allowed_prefix.len()) as int)
-                    =~= trimmed@.take(allowed_prefix.len() as int));
-            }
             return leading_whitespace_len..(leading_whitespace_len + allowed_prefix.len());
         }
     }
-    // Make this iter peekable to see if next char is numeric
-    #[cfg(not(verus_keep_ghost))]
-    let mut char_indices = itertools::peek_nth(trimmed.iter().enumerate());
-    #[cfg(verus_keep_ghost)]
     let mut char_indices = crate::trusted::comparisons::indexed_peek(trimmed);
-
     let first = char_indices.peek();
-
     if matches!(first, Some((_, b'-' | b'+'))) {
         char_indices.next();
     }
-
     let mut had_e_notation = false;
     let mut had_decimal_pt = false;
     let mut had_hex_notation: bool = false;
-    #[cfg(verus_keep_ghost)]
-    proof_decl! {
-        let ghost end = crate::proof::comparisons::general_scan(inp@,
-            leading_whitespace_len + char_indices.position(), false, false, false);
-    }
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        crate::proof::comparisons::general_scan_bounds(inp@,
-            leading_whitespace_len + char_indices.position(), false, false, false);
-    }
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant char_indices.bytes() == trimmed@, char_indices.position() <= trimmed.len(),
-            trimmed@ == inp@.skip(leading_whitespace_len as int),
-            leading_whitespace_len == crate::proof::comparisons::leading_white(inp@, 0),
-            leading_whitespace_len + trimmed.len() == inp.len(),
-            leading_whitespace_len <= end <= inp.len(),
-            decimal_pt == b'.',
-            crate::proof::comparisons::special_prefix(trimmed@) == 0,
-            crate::proof::comparisons::general_prefix_model(inp@)
-                == inp@.subrange(leading_whitespace_len as int, end),
-            end == crate::proof::comparisons::general_scan(inp@,
-                leading_whitespace_len + char_indices.position(), had_hex_notation, had_decimal_pt, had_e_notation),
-        ensures char_indices.position() == trimmed.len(), end == inp.len(),
-        decreases trimmed.len() - char_indices.position(),
-    ))]
     while let Some((idx, c_ref)) = char_indices.next() {
         let c = *c_ref;
-        #[cfg(verus_keep_ghost)]
-        proof! { reveal(crate::proof::comparisons::general_scan); }
         if had_hex_notation && c.is_ascii_hexdigit() {
             continue;
         }
-
         if c.is_ascii_digit() {
             if c == b'0' && matches!(char_indices.peek(), Some((_, b'x' | b'X'))) {
                 had_hex_notation = true;
@@ -3796,7 +2604,6 @@ fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
             }
             continue;
         }
-
         if c == decimal_pt && !had_decimal_pt && !had_e_notation {
             had_decimal_pt = true;
             continue;
@@ -3804,16 +2611,11 @@ fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
         let is_decimal_e = (c == b'e' || c == b'E') && !had_hex_notation;
         let is_hex_e = (c == b'p' || c == b'P') && had_hex_notation;
         if (is_decimal_e || is_hex_e) && !had_e_notation {
-            // we can only consume the 'e' if what follow is either a digit, or a sign followed by a digit.
             if let Some(next) = char_indices.peek() {
                 let next_char = *next.1;
                 if (next_char == b'+' || next_char == b'-')
-                    && matches!(
-                        char_indices.peek_nth(1),
-                        Some((_, c)) if c.is_ascii_digit()
-                    )
+                    && matches ! (char_indices . peek_nth (1) , Some ((_ , c)) if c . is_ascii_digit ())
                 {
-                    // Consume the sign. The following digits will be consumed by the main loop.
                     char_indices.next();
                     had_e_notation = true;
                     continue;
@@ -3826,13 +2628,9 @@ fn get_leading_gen(inp: &[u8], decimal_pt: u8) -> Range<usize> {
         }
         return leading_whitespace_len..(leading_whitespace_len + idx);
     }
-    #[cfg(verus_keep_ghost)]
-    proof! { assert(char_indices.position() == trimmed.len()); assert(end == inp.len()); }
     leading_whitespace_len..inp.len()
 }
-
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub enum GeneralBigDecimalParseResult {
     Invalid,
     Nan,
@@ -3840,36 +2638,17 @@ pub enum GeneralBigDecimalParseResult {
     Number(BigDecimal),
     Infinity,
 }
-
-/// Parse the beginning string into a [`GeneralBigDecimalParseResult`].
-/// Using a [`GeneralBigDecimalParseResult`] instead of [`ExtendedBigDecimal`] is necessary to correctly order floats.
 #[inline(always)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires decimal_pt == b'.',
-    ensures crate::proof::comparisons::native_number_view(&result) == crate::proof::converted_number(a@),
-))]
 fn general_bd_parse(a: &[u8], decimal_pt: u8) -> GeneralBigDecimalParseResult {
-    #[cfg(not(verus_keep_ghost))]
-    let parsed_bytes = (decimal_pt != DECIMAL_PT).then(|| {
-        a.iter()
-            .map(|&b| if b == decimal_pt { DECIMAL_PT } else { b })
-            .collect::<Vec<_>>()
-    });
-    #[cfg(verus_keep_ghost)]
     let parsed_bytes = crate::trusted::comparisons::replace_decimal(a, decimal_pt);
-    let input = match &parsed_bytes { Some(bytes) => &bytes[..], None => a };
-
-    // The string should be valid ASCII to be parsed.
-    #[cfg(not(verus_keep_ghost))]
-    let decoded = std::str::from_utf8(input);
-    #[cfg(verus_keep_ghost)]
+    let input = match &parsed_bytes {
+        Some(bytes) => &bytes[..],
+        None => a,
+    };
     let decoded = crate::trusted::comparisons::utf8(input);
     let Ok(a) = decoded else {
         return GeneralBigDecimalParseResult::Invalid;
     };
-
-    // Parse digits, and fold in recoverable errors
     let ebd = match ExtendedBigDecimal::extended_parse(a) {
         Err(ExtendedParserError::NotNumeric) => return GeneralBigDecimalParseResult::Invalid,
         Err(
@@ -3879,59 +2658,37 @@ fn general_bd_parse(a: &[u8], decimal_pt: u8) -> GeneralBigDecimalParseResult {
         )
         | Ok(ebd) => ebd,
     };
-
     match ebd {
         ExtendedBigDecimal::BigDecimal(bd) => GeneralBigDecimalParseResult::Number(bd),
         ExtendedBigDecimal::Infinity => GeneralBigDecimalParseResult::Infinity,
         ExtendedBigDecimal::MinusInfinity => GeneralBigDecimalParseResult::MinusInfinity,
-        // Minus zero and zero are equal
         ExtendedBigDecimal::MinusZero => GeneralBigDecimalParseResult::Number(0.into()),
         ExtendedBigDecimal::Nan | ExtendedBigDecimal::MinusNan => GeneralBigDecimalParseResult::Nan,
     }
 }
-
-/// Compares two floats, with errors and non-numerics assumed to be -inf.
-/// Stops coercing at the first non-numeric char.
-/// We explicitly need to convert to f64 in this case.
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    ensures result == crate::proof::comparisons::number_order(
-        crate::proof::comparisons::native_number_view(a), crate::proof::comparisons::native_number_view(b)),
-    no_unwind
-))]
 fn general_numeric_compare(
     a: &GeneralBigDecimalParseResult,
     b: &GeneralBigDecimalParseResult,
 ) -> Ordering {
-    #[cfg(not(verus_keep_ghost))]
-    { a.partial_cmp(b).unwrap() }
-    #[cfg(verus_keep_ghost)]
-    { crate::trusted::comparisons::unwrap_order(crate::trusted::comparisons::derived_general_cmp(a, b)) }
+    {
+        crate::trusted::comparisons::unwrap_order(crate::trusted::comparisons::derived_general_cmp(
+            a, b,
+        ))
+    }
 }
-
-/// Generate a 128-bit salt from a uniform RNG distribution.
 fn get_rand_string() -> [u8; SALT_LEN] {
     rng().sample(rand::distr::StandardUniform)
 }
-
-const SALT_LEN: usize = 16; // 128-bit salt
-const MAX_BYTES: usize = 1024 * 1024; // Read cap: 1 MiB
-const BUF_LEN: usize = 8192; // 8 KiB read buffer
+const SALT_LEN: usize = 16;
+const MAX_BYTES: usize = 1024 * 1024;
+const BUF_LEN: usize = 8192;
 const U64_LEN: usize = 8;
-const RANDOM_SOURCE_TAG: &[u8] = b"uutils-sort-random-source"; // Domain separation tag
-
-/// Create a 128-bit salt by hashing up to 1 MiB from the given file.
-///
-/// The file has to hold at least [`SALT_LEN`] bytes. GNU asks for the same 128
-/// bits and reports `end of file` when the source cannot supply them, rather
-/// than shuffling with whatever it managed to read.
+const RANDOM_SOURCE_TAG: &'static [u8] = b"uutils-sort-random-source";
 fn salt_from_random_source(path: &Path) -> UResult<[u8; SALT_LEN]> {
     let mut reader = open_with_open_failed_error(path)?;
     let mut buf = [0u8; BUF_LEN];
     let mut total = 0usize;
-    // freeze seed for --random-source
     let mut hasher = FoldHasher::with_seed(1, SharedSeed::global_fixed());
-
     while let n @ 1.. = reader
         .read(&mut buf)
         .map_err(|error| SortError::ReadFailed {
@@ -3947,42 +2704,33 @@ fn salt_from_random_source(path: &Path) -> UResult<[u8; SALT_LEN]> {
             break;
         }
     }
-
     if total < SALT_LEN {
         return Err(SortError::RandomSourceEndOfFile {
             path: path.to_owned(),
         }
         .into());
     }
-
     let first = hasher.finish();
-    // freeze seed for --random-source
     let mut second_hasher = FoldHasher::with_seed(2, SharedSeed::global_fixed());
     second_hasher.write(RANDOM_SOURCE_TAG);
     second_hasher.write_u64(first);
     let second = second_hasher.finish();
-
     let mut out = [0u8; SALT_LEN];
     out[..U64_LEN].copy_from_slice(&first.to_le_bytes());
     out[U64_LEN..].copy_from_slice(&second.to_le_bytes());
     Ok(out)
 }
-
 fn get_hash<T: Hash>(t: &T) -> u64 {
-    // Is reproducibility of get_hash itself needed for --random-source ?
     let mut s = FoldHasher::with_seed(0, SharedSeed::global_fixed());
     t.hash(&mut s);
     s.finish()
 }
-
 fn random_shuffle(a: &[u8], b: &[u8], salt: &[u8]) -> Ordering {
     let da = get_hash(&(a, salt));
     let db = get_hash(&(b, salt));
     da.cmp(&db)
 }
-
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
-#[cfg_attr(verus_keep_ghost, verus_verify)]
 pub enum Month {
     Unknown,
     January,
@@ -3998,49 +2746,21 @@ pub enum Month {
     November,
     December,
 }
-
-/// Cached locale month lookup table.
-/// Each entry is (`uppercased_name`, `month_value`).
 pub type MonthTable = Vec<(Vec<u8>, Month)>;
-
-#[cfg(verus_keep_ghost)]
-verus! {
-pub struct MonthTableFactory { }
-
+pub struct MonthTableFactory {}
 impl crate::trusted::comparisons::MonthInitializer for MonthTableFactory {
-    open spec fn ready(&self) -> bool { crate::proof::comparisons::c_locale() }
-    fn initialize(&self) -> (result: Option<MonthTable>)
-        ensures result is None,
-    { init_month_table() }
-}
-}
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::comparisons::c_locale(),
-    ensures result is None,
-    no_unwind
-))]
-fn get_locale_month_table() -> Option<&'static MonthTable> {
-    #[cfg(not(verus_keep_ghost))]
-    static TABLE: OnceLock<Option<MonthTable>> = OnceLock::new();
-
-    #[cfg(not(verus_keep_ghost))]
-    { TABLE.get_or_init(init_month_table).as_ref() }
-    #[cfg(verus_keep_ghost)]
-    {
-        crate::trusted::comparisons::cached_none_months(MonthTableFactory { })
+    fn initialize(&self) -> Option<MonthTable> {
+        init_month_table()
     }
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::comparisons::c_locale(),
-    ensures result is None,
-    no_unwind
-))]
+fn get_locale_month_table() -> Option<&'static MonthTable> {
+    { crate::trusted::comparisons::cached_none_months(MonthTableFactory {}) }
+}
 fn init_month_table() -> Option<MonthTable> {
-    let months = match get_locale_months() { Some(months) => months, None => return None };
+    let months = match get_locale_months() {
+        Some(months) => months,
+        None => return None,
+    };
     let all_months = [
         Month::January,
         Month::February,
@@ -4055,217 +2775,59 @@ fn init_month_table() -> Option<MonthTable> {
         Month::November,
         Month::December,
     ];
-    #[cfg(not(verus_keep_ghost))]
-    let table: Vec<(Vec<u8>, Month)> = months
-        .iter()
-        .zip(all_months.iter())
-        .map(|(name, &month)| (name.clone(), month))
-        .collect();
-    #[cfg(verus_keep_ghost)]
     let table = crate::trusted::comparisons::month_pairs(months, &all_months);
     Some(table)
 }
-
-#[cfg(not(verus_keep_ghost))]
-fn trusted_month_equal(a: &Vec<u8>, b: &[u8; 3]) -> bool { a.as_slice() == b }
-#[cfg(verus_keep_ghost)]
 use crate::trusted::comparisons::equal_vec_array as trusted_month_equal;
-
-/// Parse the beginning string into a Month, returning [`Month::Unknown`] on errors.
-/// Also returns the byte length consumed from the input (after leading blanks).
-///
-/// The stored locale month names have blanks stripped and are uppercased.
-/// Comparison against input is case-insensitive but NOT blank-insensitive:
-/// the input must match the stored name exactly (after leading blank trimming).
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::comparisons::c_locale(),
-    ensures crate::proof::comparisons::native_month(result.0) == crate::proof::comparisons::month_model(line@),
-    no_unwind
-))]
 fn month_parse(line: &[u8]) -> (Month, usize) {
-    #[cfg(verus_keep_ghost)]
-    proof_decl! { let ghost input = line@; let ghost mut skipped = 0int; }
     let mut line = line;
-    #[cfg_attr(verus_keep_ghost, verus_spec(
-        invariant 0 <= skipped <= input.len(), line@ == input.skip(skipped),
-            forall|j: int| #![auto] 0 <= j < skipped ==> crate::proof::ascii_blank(input[j]),
-        decreases line.len(),
-    ))]
     while {
-        #[cfg(not(verus_keep_ghost))]
-        { !line.is_empty() && is_blank(line[0]) }
-        #[cfg(verus_keep_ghost)]
-        { crate::trusted::comparisons::slice_len(line) > 0
-            && is_blank(*crate::trusted::comparisons::slice_at(line, 0)) }
-    }
-    {
-        #[cfg(not(verus_keep_ghost))]
-        { line = &line[1..]; }
-        #[cfg(verus_keep_ghost)]
-        { line = crate::trusted::comparisons::slice_from(line, 1); }
-        #[cfg(verus_keep_ghost)]
-        proof! { skipped = skipped + 1; }
-    }
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        crate::proof::comparisons::blanks_end(input, 0, skipped);
-        reveal_with_fuel(crate::proof::comparisons::month_from, 13);
-    }
-
-    // Try locale-specific month names, keeping the longest match.
-    // This handles cases where one name is a prefix of another
-    // (e.g., Japanese "1" vs "10", "11", "12").
-    if let Some(table) = get_locale_month_table() {
-        #[cfg(verus_keep_ghost)]
-        proof! { assert(false); }
-        #[cfg(not(verus_keep_ghost))]
         {
-        let mut best: Option<(usize, Month)> = None;
-        for (name, month) in table {
-            #[cfg(not(verus_keep_ghost))]
-            let matches = line
-                .get(..name.len())
-                .is_some_and(|l| l.eq_ignore_ascii_case(name));
-            #[cfg(verus_keep_ghost)]
-            let matches = crate::trusted::comparisons::starts_folded(line, &name[..]);
-            let longer = match &best { Some((len, _)) => name.len() > *len, None => true };
-            if matches && longer
-            {
-                best = Some((name.len(), *month));
-            }
+            crate::trusted::comparisons::slice_len(line) > 0
+                && is_blank(*crate::trusted::comparisons::slice_at(line, 0))
         }
-        if let Some((len, month)) = best {
-            return (month, len);
-        }
+    } {
+        {
+            line = crate::trusted::comparisons::slice_from(line, 1);
         }
     }
-
-    // Fall back to English 3-letter abbreviations
-    #[cfg(not(verus_keep_ghost))]
-    let prefix = line.get(..3).map(<[u8]>::to_ascii_uppercase);
-    #[cfg(verus_keep_ghost)]
+    if let Some(table) = get_locale_month_table() {}
     let prefix = crate::trusted::comparisons::upper_prefix(line, 3);
-    #[cfg(verus_keep_ghost)]
-    proof! {
-        crate::proof::comparisons::month_as_prefix(input, skipped);
-        match &prefix {
-            Some(name) => {
-                assert(line@.take(3) =~= input.subrange(skipped, skipped + 3));
-                assert(name@ =~= input.subrange(skipped, skipped + 3)
-                    .map_values(|byte: u8| crate::proof::ascii_upper(byte)));
-                assert(crate::proof::comparisons::month_model(input)
-                    == crate::proof::comparisons::english_month(name@));
-            },
-            None => {},
-        }
-    }
     match &prefix {
-        Some(name) if crate::trusted_month_equal(name, &[b'J',b'A',b'N']) => (Month::January, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'F',b'E',b'B']) => (Month::February, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'M',b'A',b'R']) => (Month::March, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'A',b'P',b'R']) => (Month::April, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'M',b'A',b'Y']) => (Month::May, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'J',b'U',b'N']) => (Month::June, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'J',b'U',b'L']) => (Month::July, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'A',b'U',b'G']) => (Month::August, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'S',b'E',b'P']) => (Month::September, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'O',b'C',b'T']) => (Month::October, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'N',b'O',b'V']) => (Month::November, 3),
-        Some(name) if crate::trusted_month_equal(name, &[b'D',b'E',b'C']) => (Month::December, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'J', b'A', b'N']) => (Month::January, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'F', b'E', b'B']) => (Month::February, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'M', b'A', b'R']) => (Month::March, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'A', b'P', b'R']) => (Month::April, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'M', b'A', b'Y']) => (Month::May, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'J', b'U', b'N']) => (Month::June, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'J', b'U', b'L']) => (Month::July, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'A', b'U', b'G']) => (Month::August, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'S', b'E', b'P']) => {
+            (Month::September, 3)
+        }
+        Some(name) if crate::trusted_month_equal(name, &[b'O', b'C', b'T']) => (Month::October, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'N', b'O', b'V']) => (Month::November, 3),
+        Some(name) if crate::trusted_month_equal(name, &[b'D', b'E', b'C']) => (Month::December, 3),
         _ => (Month::Unknown, 0),
     }
 }
-
-#[cfg_attr(verus_keep_ghost, verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    requires crate::proof::comparisons::c_locale(),
-    ensures result == crate::proof::comparisons::integer_order(
-        crate::proof::comparisons::month_model(a@) as int, crate::proof::comparisons::month_model(b@) as int),
-    no_unwind
-))]
 fn month_compare(a: &[u8], b: &[u8]) -> Ordering {
     let ma = month_parse(a).0;
     let mb = month_parse(b).0;
-
-    #[cfg(not(verus_keep_ghost))]
-    { ma.cmp(&mb) }
-    #[cfg(verus_keep_ghost)]
     { crate::trusted::comparisons::cmp_month(&ma, &mb) }
 }
-
-#[cfg_attr(all(verus_keep_ghost, uutils_sort_full), verus_verify)]
-#[cfg_attr(verus_keep_ghost, verus_spec(result =>
-    with Tracked(log): Tracked<&mut crate::proof::OutputLog>,
-    requires !settings.debug,
-        crate::trusted::output_session(output) == old(log).session(),
-        vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&iter),
-        vstd::std_specs::iter::IteratorSpec::will_return_none(&iter),
-        vstd::std_specs::iter::IteratorSpec::decrease(&iter) is Some,
-    ensures result is Ok, final(log).session() == old(log).session(), final(log).flushed(),
-        final(log).bytes() == crate::proof::sorting::emit(
-            crate::proof::sorting::native_lines(vstd::std_specs::iter::IteratorSpec::remaining(&iter)),
-            crate::trusted::ending_byte(settings.line_ending)),
-))]
 fn print_sorted<'a, T: Iterator<Item = &'a Line<'a>>>(
     iter: T,
     settings: &GlobalSettings,
     output: Output,
 ) -> SortResult<()> {
-    #[cfg(verus_keep_ghost)]
-    proof_decl! {
-        let ghost original = vstd::std_specs::iter::IteratorSpec::remaining(&iter);
-        let ghost session = log.session();
-    }
-    #[cfg(not(verus_keep_ghost))]
-    let ctx = output.write_failed_context();
-    #[cfg(not(verus_keep_ghost))]
-    let mut writer = output.into_write()?;
-    #[cfg(verus_keep_ghost)]
-    proof_with! { Tracked(&mut *log) }
-    #[cfg(verus_keep_ghost)]
     let mut writer = crate::trusted::output_writer(output)?;
-    #[cfg_attr(verus_keep_ghost, verus_spec(state =>
-        invariant !settings.debug,
-            state.seq() == original,
-            vstd::std_specs::iter::IteratorSpec::obeys_prophetic_iter_laws(&state.iter),
-            vstd::std_specs::iter::IteratorSpec::will_return_none(&state.iter),
-            vstd::std_specs::iter::IteratorSpec::decrease(&state.iter) is Some,
-            log.session() == session,
-            crate::trusted::writer_session(&writer) == log.session(),
-            log.bytes() == crate::proof::sorting::emit(
-                crate::proof::sorting::native_lines(state.seq().take(state.index())),
-                crate::trusted::ending_byte(settings.line_ending)),
-    ))]
     for line in iter {
-        #[cfg(verus_keep_ghost)]
-        proof! {
-            crate::proof::sorting::native_line_value(line);
-            crate::proof::sorting::native_emit_step(state.seq(), state.index(),
-                crate::trusted::ending_byte(settings.line_ending));
-        }
-        #[cfg(not(verus_keep_ghost))]
-        line.write(&mut writer, settings).map_err_context(&ctx)?;
-        #[cfg(verus_keep_ghost)]
-        proof_with! { Tracked(&mut *log) }
-        #[cfg(verus_keep_ghost)]
         line.write(&mut writer, settings)?;
     }
-    #[cfg(verus_keep_ghost)]
-    proof! { assert(original.take(original.len() as int) =~= original); }
-    #[cfg(not(verus_keep_ghost))]
-    writer.flush().map_err_context(ctx)?;
-    #[cfg(verus_keep_ghost)]
-    proof_with! { Tracked(&mut *log) }
-    #[cfg(verus_keep_ghost)]
     crate::trusted::flush_output(&mut writer)?;
     Ok(())
 }
-
-/// Check that all inputs are readable before sorting starts, like GNU sort's
-/// `check_inputs`. The inputs are probed with `access(2)` rather than opened:
-/// opening a FIFO here would block until a writer appears and lose data on the
-/// reopen, and keeping every input open would be bounded by `RLIMIT_NOFILE`.
 fn check_inputs(files: &[OsString]) -> UResult<()> {
     for file in files {
         if file == STDIN_FILE {
@@ -4279,28 +2841,22 @@ fn check_inputs(files: &[OsString]) -> UResult<()> {
     }
     Ok(())
 }
-
 #[cfg(all(unix, not(target_os = "redox")))]
 fn check_readable(path: &Path) -> std::io::Result<()> {
     use rustix::fs::{Access, access};
-
     access(path, Access::READ_OK).map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))
 }
-
 #[cfg(any(not(unix), target_os = "redox"))]
 fn check_readable(path: &Path) -> std::io::Result<()> {
-    // No `rustix::fs::access` here, so open the file and close it right away.
     File::open(path)?;
     Ok(())
 }
-
 fn open(path: impl AsRef<OsStr>) -> UResult<InputReader> {
     let path = path.as_ref();
     if path == STDIN_FILE {
         let stdin = stdin();
         return Ok(boxed_reader(stdin));
     }
-
     let path = Path::new(path);
     match File::open(path) {
         Ok(f) => Ok(boxed_reader(f)),
@@ -4311,15 +2867,12 @@ fn open(path: impl AsRef<OsStr>) -> UResult<InputReader> {
         .into()),
     }
 }
-
 fn open_with_open_failed_error(path: impl AsRef<OsStr>) -> UResult<InputReader> {
-    // On error, returns an OpenFailed error instead of a ReadFailed error
     let path = path.as_ref();
     if path == STDIN_FILE {
         let stdin = stdin();
         return Ok(boxed_reader(stdin));
     }
-
     let path = Path::new(path);
     match File::open(path) {
         Ok(f) => Ok(boxed_reader(f)),
@@ -4330,16 +2883,12 @@ fn open_with_open_failed_error(path: impl AsRef<OsStr>) -> UResult<InputReader> 
         .into()),
     }
 }
-
-/// The thread count of `--parallel`, reported as GNU does: a leading `+`
-/// is accepted, zero is refused, and a value that is not a number, or has
-/// a suffix, is an invalid argument.
 fn parse_parallel(value: &str) -> UResult<u64> {
     let digits = value.strip_prefix('+').unwrap_or(value);
     let invalid = |key: &str| {
         USimpleError::new(
             2,
-            translate!(key, "option" => options::PARALLEL, "arg" => value.quote()),
+            translate ! (key , "option" => options :: PARALLEL , "arg" => value . quote ()),
         )
     };
     if !digits.starts_with(|c: char| c.is_ascii_digit()) {
@@ -4357,150 +2906,16 @@ fn parse_parallel(value: &str) -> UResult<u64> {
         Err(_) => Err(invalid("sort-option-arg-too-large")),
     }
 }
-
 fn format_error_message(error: &ParseSizeError, s: &str, option: &str) -> String {
-    // NOTE:
-    // GNU's sort echos affected flag, -S or --buffer-size, depending on user's selection
     match error {
         ParseSizeError::InvalidSuffix(_) => {
-            translate!("sort-invalid-suffix-in-option-arg", "option" => option, "arg" => s.quote())
+            translate ! ("sort-invalid-suffix-in-option-arg" , "option" => option , "arg" => s . quote ())
         }
         ParseSizeError::ParseFailure(_) | ParseSizeError::PhysicalMem(_) => {
-            translate!("sort-invalid-option-arg", "option" => option, "arg" => s.quote())
+            translate ! ("sort-invalid-option-arg" , "option" => option , "arg" => s . quote ())
         }
         ParseSizeError::SizeTooBig(_) => {
-            translate!("sort-option-arg-too-large", "option" => option, "arg" => s.quote())
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    fn tokenize_helper(line: &[u8], separator: Option<u8>) -> Vec<Field> {
-        let mut buffer = vec![];
-        let precomputed = Precomputed::default();
-        tokenize(line, separator, &mut buffer, &precomputed);
-        buffer
-    }
-
-    #[test]
-    fn test_random_shuffle() {
-        let a = b"Ted";
-        let b = b"Ted";
-        let c = get_rand_string();
-
-        assert_eq!(Ordering::Equal, random_shuffle(a, b, &c));
-    }
-
-    #[test]
-    fn test_month_compare() {
-        let a = b"JaN";
-        let b = b"OCt";
-
-        assert_eq!(Ordering::Less, month_compare(a, b));
-    }
-    #[test]
-    fn test_version_compare() {
-        let a = b"1.2.3-alpha2";
-        let b = b"1.4.0";
-
-        assert_eq!(Ordering::Less, version_cmp(a, b));
-    }
-
-    #[test]
-    fn test_random_compare() {
-        let a = b"9";
-        let b = b"9";
-        let c = get_rand_string();
-
-        assert_eq!(Ordering::Equal, random_shuffle(a, b, &c));
-    }
-
-    #[test]
-    fn test_tokenize_fields() {
-        let line = b"foo bar b    x";
-        assert_eq!(tokenize_helper(line, None), vec![0..3, 3..7, 7..9, 9..14]);
-    }
-
-    #[test]
-    fn test_tokenize_fields_leading_whitespace() {
-        let line = b"    foo bar b    x";
-        assert_eq!(
-            tokenize_helper(line, None),
-            vec![0..7, 7..11, 11..13, 13..18]
-        );
-    }
-
-    #[test]
-    fn test_tokenize_fields_custom_separator() {
-        let line = b"aaa foo bar b    x";
-        assert_eq!(
-            tokenize_helper(line, Some(b'a')),
-            vec![0..0, 1..1, 2..2, 3..9, 10..18]
-        );
-    }
-
-    #[test]
-    fn test_tokenize_fields_trailing_custom_separator() {
-        let line = b"a";
-        assert_eq!(tokenize_helper(line, Some(b'a')), vec![0..0]);
-        let line = b"aa";
-        assert_eq!(tokenize_helper(line, Some(b'a')), vec![0..0, 1..1]);
-        let line = b"..a..a";
-        assert_eq!(tokenize_helper(line, Some(b'a')), vec![0..2, 3..5]);
-    }
-
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn test_line_size() {
-        // We should make sure to not regress the size of the Line struct because
-        // it is unconditional overhead for every line we sort.
-        assert_eq!(size_of::<Line>(), 24);
-    }
-
-    #[test]
-    fn test_parse_byte_count() {
-        let valid_input = [
-            ("0", 0),
-            ("50K", 50 * 1024),
-            ("50k", 50 * 1024),
-            ("1M", 1024 * 1024),
-            ("100M", 100 * 1024 * 1024),
-            #[cfg(not(target_pointer_width = "32"))]
-            ("1000G", 1000 * 1024 * 1024 * 1024),
-            #[cfg(not(target_pointer_width = "32"))]
-            ("10T", 10 * 1024 * 1024 * 1024 * 1024),
-            ("1b", 1),
-            ("1024b", 1024),
-            ("1024Mb", 1024 * 1024 * 1024), // NOTE: This might not be how GNU `sort` behaves for 'Mb'
-            ("1", 1024),                    // K is default
-            ("50", 50 * 1024),
-            ("K", 1024),
-            ("k", 1024),
-            ("m", 1024 * 1024),
-            #[cfg(not(target_pointer_width = "32"))]
-            ("E", 1024 * 1024 * 1024 * 1024 * 1024 * 1024),
-        ];
-        for (input, expected_output) in &valid_input {
-            assert_eq!(
-                GlobalSettings::parse_byte_count(input),
-                Ok(*expected_output)
-            );
-        }
-
-        // SizeTooBig
-        let invalid_input = ["500E", "1Y"];
-        for input in &invalid_input {
-            assert!(GlobalSettings::parse_byte_count(input).is_err());
-        }
-
-        // ParseFailure
-        let invalid_input = ["nonsense", "1B", "B", "b", "p", "e", "z", "y"];
-        for input in &invalid_input {
-            assert!(GlobalSettings::parse_byte_count(input).is_err());
+            translate ! ("sort-option-arg-too-large" , "option" => option , "arg" => s . quote ())
         }
     }
 }

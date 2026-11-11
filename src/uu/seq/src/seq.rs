@@ -19,7 +19,9 @@ use uucore::format::num_format::FloatVariant;
 use uucore::format::{Format, num_format};
 use uucore::{fast_inc::fast_inc, format_usage};
 
+#[cfg(not(uutils_seq_all))]
 mod diagnostics;
+#[cfg(not(uutils_seq_all))]
 mod error;
 
 // public to allow fuzzing
@@ -27,13 +29,20 @@ mod error;
 pub mod number;
 #[cfg(not(fuzzing))]
 mod number;
+#[cfg(not(uutils_seq_all))]
 mod numberparse;
+#[cfg(not(uutils_seq_all))]
 use crate::error::SeqError;
 use crate::number::PreciseNumber;
 
 #[cfg(all(unix, not(target_os = "fuchsia")))]
 use uucore::signals;
 use uucore::translate;
+
+#[path = "../../../../verification_runtime/stdio.rs"]
+mod io_trusted;
+#[path = "../../../../verification_runtime/seq_library.rs"]
+mod format_trusted;
 
 const OPT_SEPARATOR: &str = "separator";
 const OPT_TERMINATOR: &str = "terminator";
@@ -43,7 +52,8 @@ pub(crate) const OPT_FORMAT: &str = "format";
 const ARG_NUMBERS: &str = "numbers";
 
 #[derive(Clone)]
-struct SeqOptions<'a> {
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
+pub(crate) struct SeqOptions<'a> {
     separator: OsString,
     terminator: OsString,
     equal_width: bool,
@@ -57,6 +67,7 @@ type RangeFloat = (ExtendedBigDecimal, ExtendedBigDecimal, ExtendedBigDecimal);
 
 /// Turn short args with attached value, for example "-s,", into two args "-s" and "," to make
 /// them work with clap.
+#[cfg(not(uutils_seq_all))]
 fn split_short_args_with_value(args: impl uucore::Args) -> impl uucore::Args {
     let mut v: Vec<OsString> = Vec::new();
 
@@ -79,6 +90,7 @@ fn split_short_args_with_value(args: impl uucore::Args) -> impl uucore::Args {
     v.into_iter()
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn select_precision(
     first: &PreciseNumber,
     increment: &PreciseNumber,
@@ -95,6 +107,7 @@ fn select_precision(
     }
 }
 
+#[cfg(not(uutils_seq_all))]
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let raw_args: Vec<OsString> = args.collect();
@@ -222,6 +235,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         &format,
         fast_allowed,
         padding,
+        BufWriter::new(stdout().lock()),
     );
 
     match result {
@@ -241,6 +255,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 }
 
+#[cfg(not(uutils_seq_all))]
 pub fn uu_app() -> Command {
     Command::new("seq")
         .trailing_var_arg(true)
@@ -286,8 +301,63 @@ pub fn uu_app() -> Command {
         )
 }
 
+
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+pub(crate) fn execute(
+    first: PreciseNumber,
+    increment: PreciseNumber,
+    last: PreciseNumber,
+    options: &SeqOptions<'_>,
+    stdout: impl Write,
+) -> std::io::Result<()> {
+    let (format, padding, fast_allowed) = if let Some(str) = options.format {
+        let format = format_trusted::parse(str)?;
+        (format, 0, false)
+    } else {
+        let precision = select_precision(&first, &increment, &last);
+
+        let padding = if options.equal_width {
+            let precision_value = precision.unwrap_or(0);
+            // The increment is never printed, so only its fractional digits
+            // (through `precision`) matter, not its integral ones.
+            // Saturate rather than overflow: a value with an astronomically large
+            // exponent makes `num_integral_digits` near `usize::MAX`. The resulting
+            // width is rejected later by the formatter's width check.
+            first
+                .num_integral_digits
+                .max(last.num_integral_digits)
+                .saturating_add(if precision_value > 0 {
+                    precision_value.saturating_add(1)
+                } else {
+                    0
+                })
+        } else {
+            0
+        };
+
+        let formatter = match precision {
+            // format with precision: decimal floats and integers
+            Some(precision) => format_trusted::decimal_formatter(padding, precision),
+            // format without precision: hexadecimal floats
+            None => format_trusted::shortest_formatter(),
+        };
+        // Allow fast printing if precision is 0 (integer inputs), `print_seq` will do further checks.
+        (
+            Format::from_formatter(formatter),
+            padding,
+            precision == Some(0),
+        )
+    };
+
+    print_seq(
+        (first.number, increment.number, last.number),
+        &options.separator, &options.terminator, &format, fast_allowed, padding, stdout,
+    )
+}
+
 /// Integer print, default format, positive increment: fast code path
 /// that avoids reformatting digit at all iterations.
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn fast_print_seq(
     mut stdout: impl Write,
     first: &BigUint,
@@ -342,16 +412,17 @@ fn fast_print_seq(
     let inc_str = inc_str.as_bytes();
 
     for _ in 0..loop_cnt {
-        stdout.write_all(&buf[start..])?;
+        io_trusted::write_all(&mut stdout, &buf[start..])?;
         fast_inc(buf, &mut start, num_end, inc_str);
     }
     // Write the last number without separator, but with terminator.
-    stdout.write_all(&buf[start..num_end])?;
-    stdout.write_all(terminator.as_encoded_bytes())?;
-    stdout.flush()?;
+    io_trusted::write_all(&mut stdout, &buf[start..num_end])?;
+    io_trusted::write_all(&mut stdout, terminator.as_encoded_bytes())?;
+    format_trusted::flush(&mut stdout)?;
     Ok(())
 }
 
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn done_printing<T: Zero + PartialOrd>(next: &T, increment: &T, last: &T) -> bool {
     if increment >= &T::zero() {
         next > last
@@ -361,6 +432,7 @@ fn done_printing<T: Zero + PartialOrd>(next: &T, increment: &T, last: &T) -> boo
 }
 
 /// Arbitrary precision decimal number code path ("slow" path)
+#[cfg_attr(verus_keep_ghost, verus_verify)]
 fn print_seq(
     range: RangeFloat,
     separator: &OsStr,
@@ -368,9 +440,8 @@ fn print_seq(
     format: &Format<num_format::Float, &ExtendedBigDecimal>,
     fast_allowed: bool,
     padding: usize, // Used by fast path only
+    mut stdout: impl Write,
 ) -> std::io::Result<()> {
-    let stdout = stdout().lock();
-    let mut stdout = BufWriter::new(stdout);
     let (first, increment, last) = range;
 
     if fast_allowed {
@@ -401,16 +472,17 @@ fn print_seq(
     let mut is_first_iteration = true;
     while !done_printing(&value, &increment, &last) {
         if !is_first_iteration {
-            stdout.write_all(separator.as_encoded_bytes())?;
+            io_trusted::write_all(&mut stdout, separator.as_encoded_bytes())?;
         }
-        format.fmt(&mut stdout, &value)?;
+        let rendered = format_trusted::render(format, &value)?;
+        io_trusted::write_all(&mut stdout, &rendered)?;
         // TODO Implement augmenting addition.
         value = value + increment.clone();
         is_first_iteration = false;
     }
     if !is_first_iteration {
-        stdout.write_all(terminator.as_encoded_bytes())?;
+        io_trusted::write_all(&mut stdout, terminator.as_encoded_bytes())?;
     }
-    stdout.flush()?;
+    format_trusted::flush(&mut stdout)?;
     Ok(())
 }

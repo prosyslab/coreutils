@@ -6,6 +6,8 @@
 // spell-checker:ignore extendedbigdecimal
 
 use num_traits::Zero;
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
 
 use uucore::extendedbigdecimal::ExtendedBigDecimal;
 
@@ -23,7 +25,8 @@ use uucore::extendedbigdecimal::ExtendedBigDecimal;
 /// matter of interpretation.
 ///
 /// You can get an instance of this struct by calling [`str::parse`].
-#[derive(Debug)]
+#[cfg_attr(not(verus_keep_ghost), derive(Debug))]
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
 pub struct PreciseNumber {
     pub number: ExtendedBigDecimal,
     pub num_integral_digits: usize,
@@ -31,6 +34,7 @@ pub struct PreciseNumber {
 }
 
 impl PreciseNumber {
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
     pub fn new(
         number: ExtendedBigDecimal,
         num_integral_digits: usize,
@@ -44,6 +48,7 @@ impl PreciseNumber {
     }
 
     /// The integer number one.
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
     pub fn one() -> Self {
         // We would like to implement `num_traits::One`, but it requires
         // a multiplication implementation, and we don't want to
@@ -52,6 +57,7 @@ impl PreciseNumber {
     }
 
     /// Decide whether this number is zero (either positive or negative).
+    #[cfg_attr(verus_keep_ghost, verus_verify)]
     pub fn is_zero(&self) -> bool {
         // We would like to implement `num_traits::Zero`, but it
         // requires an addition implementation, and we don't want to
