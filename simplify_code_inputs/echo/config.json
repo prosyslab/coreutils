@@ -1,0 +1,59 @@
+{
+  "utility": "echo",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "echo.rs",
+  "trusted": "trusted.rs",
+  "sources": [
+    "echo.rs"
+  ],
+  "runtime": {},
+  "source_overrides": {
+    "runtime/stdio.rs": "../common/stdio.rs"
+  },
+  "shared_runtime": {
+    "codec_library.rs": {
+      "os_bytes": "::uucore::os_str_as_bytes",
+      "path_buf": "::std::path::PathBuf::from"
+    },
+    "echo_library.rs": {
+      "enumerate": "::std::iter::Iterator::enumerate",
+      "three_digits": "::uucore::format::OctalParsing::ThreeDigits",
+      "escape_set": "::uucore::format::EscapeSet::WithoutUnicodeAndQuote",
+      "escapes": "::uucore::format::parse_escape_only",
+      "render_escape": "::uucore::format::FormatChar::write"
+    }
+  },
+  "runtime_files": [
+    "stdio.rs"
+  ],
+  "io_hooks": {
+    "mod.rs": {
+      "execute": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    }
+  },
+  "modes": {
+    "all": "true"
+  },
+  "included": [
+    "all string operands",
+    "-n",
+    "-e",
+    "-E"
+  ],
+  "excluded": [
+    "CLI parsing/help/version",
+    "failed I/O",
+    "non-Linux platforms",
+    "non-C locales"
+  ],
+  "frontend_check": true,
+  "adaptations": [
+    "The existing output loop is exposed with its normalized options and a supplied writer.",
+    "Escape parsing/rendering and enumeration use library wrappers; rendered bytes are written through the shared State-aware writer."
+  ]
+}

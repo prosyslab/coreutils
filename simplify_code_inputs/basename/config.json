@@ -1,0 +1,53 @@
+{
+  "utility": "basename",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "basename.rs",
+  "trusted": "../common/path_trusted.rs",
+  "sources": [
+    "basename.rs"
+  ],
+  "runtime": {},
+  "source_overrides": {
+    "runtime/stdio.rs": "../common/stdio.rs"
+  },
+  "shared_runtime": {
+    "codec_library.rs": {
+      "os_bytes": "::uucore::os_str_as_bytes",
+      "path_buf": "::std::path::PathBuf::from"
+    }
+  },
+  "runtime_files": [
+    "stdio.rs"
+  ],
+  "io_hooks": {
+    "mod.rs": {
+      "write_name": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    }
+  },
+  "modes": {
+    "all": "true"
+  },
+  "included": [
+    "all path operands",
+    "positional suffix",
+    "-a",
+    "-s",
+    "-z"
+  ],
+  "excluded": [
+    "CLI parsing/help/version",
+    "failed I/O",
+    "non-Linux platforms",
+    "non-C locales"
+  ],
+  "frontend_check": true,
+  "adaptations": [
+    "The existing basename calculation is retained; its CLI output loop is exposed as write_name with a supplied writer.",
+    "Reference closure patterns are expanded; path conversion and byte access use library wrappers without filesystem access."
+  ]
+}

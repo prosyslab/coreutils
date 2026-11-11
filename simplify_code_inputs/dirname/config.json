@@ -1,0 +1,50 @@
+{
+  "utility": "dirname",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "dirname.rs",
+  "trusted": "../common/path_trusted.rs",
+  "sources": [
+    "dirname.rs"
+  ],
+  "runtime": {},
+  "source_overrides": {
+    "runtime/stdio.rs": "../common/stdio.rs"
+  },
+  "shared_runtime": {
+    "path_library.rs": {
+      "all": "::std::iter::Iterator::all",
+      "rposition": "::std::iter::Iterator::rposition"
+    }
+  },
+  "runtime_files": [
+    "stdio.rs"
+  ],
+  "io_hooks": {
+    "mod.rs": {
+      "write_name": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    }
+  },
+  "modes": {
+    "all": "true"
+  },
+  "included": [
+    "all path operands",
+    "-z"
+  ],
+  "excluded": [
+    "CLI parsing/help/version",
+    "failed I/O",
+    "non-Linux platforms",
+    "non-C locales"
+  ],
+  "frontend_check": true,
+  "adaptations": [
+    "The existing path calculation is retained; its CLI output loop is exposed as write_name with a supplied writer.",
+    "Iterator all/rposition calls use standard-library wrappers; anonymous arguments and one-byte suffix tests use supported syntax."
+  ]
+}

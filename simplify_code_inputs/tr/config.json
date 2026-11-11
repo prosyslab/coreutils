@@ -1,0 +1,67 @@
+{
+  "utility": "tr",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": null,
+  "root_support": "support.rs",
+  "sources": [
+    "operation.rs",
+    "simd.rs"
+  ],
+  "runtime": {
+    "trusted_common": "common.rs",
+    "tr_trusted": "tr_tables.rs",
+    "trusted": "tr_delete.rs"
+  },
+  "runtime_files": [
+    "tr_translate.rs"
+  ],
+  "io_hooks": {
+    "operation.rs": {
+      "translate_input": {
+        "io_trusted::read": {
+          "rename": "crate::trusted_common::io::read_state"
+        },
+        "crate::original::simd::write_output": {}
+      }
+    },
+    "simd.rs": {
+      "process_input": {
+        "io_trusted::read": {
+          "rename": "crate::trusted_common::io::read_state"
+        },
+        "write_output": {}
+      },
+      "write_output": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    }
+  },
+  "modes": {
+    "delete": "matches!(args.mode, args::Mode::Delete)",
+    "squeeze": "matches!(args.mode, args::Mode::Squeeze)",
+    "translate": "matches!(args.mode, args::Mode::Translate)",
+    "delete_and_squeeze": "matches!(args.mode, args::Mode::DeleteAndSqueeze)",
+    "translate_and_squeeze": "matches!(args.mode, args::Mode::TranslateAndSqueeze)"
+  },
+  "included": [
+    "-d",
+    "-s SET1",
+    "SET1 SET2",
+    "-ds SET1 SET2",
+    "-s SET1 SET2"
+  ],
+  "excluded": [
+    "-c/-C",
+    "-t",
+    "SET syntax parsing",
+    "CLI help/version",
+    "-A/-u handling",
+    "failed I/O",
+    "invalid translation inputs",
+    "non-C locales"
+  ],
+  "trusted": "../common/proof.rs"
+}

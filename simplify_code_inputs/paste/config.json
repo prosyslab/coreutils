@@ -1,0 +1,101 @@
+{
+  "utility": "paste",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "paste.rs",
+  "source_additions": {
+    "mod.rs": "support.rs",
+    "runtime/paste.rs": "close.rs"
+  },
+  "source_replacements": {
+    "runtime/paste.rs": {
+      "writer.write_all(bytes)": "crate::trusted_common::io::write_state(writer, bytes)"
+    }
+  },
+  "io_adaptation": "Ghost state follows I/O calls; owned file readers are explicitly closed and stdout capture is initialized.",
+  "sources": [
+    "paste.rs"
+  ],
+  "runtime": {
+    "trusted_common": "common.rs",
+    "paste_trusted": "paste.rs"
+  },
+  "io_hooks": {
+    "mod.rs": {
+      "paste": {
+        "@close": "input_source_vec",
+        "@close_many": true,
+        "open_inputs": {},
+        "write_single_input_source": {},
+        ".read_until": {},
+        "paste_trusted::write_all": {},
+        "paste_trusted::lock_stdout": {},
+        ".close": {}
+      },
+      "open_inputs": {
+        "paste_trusted::library::open_file": {},
+        "paste_trusted::library::stdin_handle": {},
+        "paste_trusted::library::buffered": {}
+      },
+      "write_single_input_source": {
+        "@close": "input_source",
+        ".read": {},
+        "paste_trusted::write_all": {},
+        ".close": {}
+      },
+      "InputSource::read": {
+        "paste_trusted::library::read": {},
+        "paste_trusted::library::lock_stdin": {}
+      },
+      "InputSource::read_until": {
+        "paste_trusted::library::read_until": {},
+        "paste_trusted::library::lock_stdin": {}
+      },
+      "InputSource::close": {
+        "paste_trusted::close_input": {}
+      }
+    },
+    "runtime/paste.rs": {
+      "library::stdin_handle": {},
+      "library::open_file": {
+        "@effect": "open"
+      },
+      "library::buffered": {},
+      "library::lock_stdin": {},
+      "lock_stdout": {},
+      "library::read": {
+        "@effect": "read"
+      },
+      "library::read_until": {
+        "@effect": "read",
+        "@append": true
+      },
+      "close_input": {
+        "@effect": "close"
+      },
+      "write_all": {
+        "crate::trusted_common::io::write_state": {}
+      }
+    }
+  },
+  "modes": {
+    "parallel": "!args.serial",
+    "serial": "args.serial"
+  },
+  "included": [
+    "default parallel",
+    "-s",
+    "-d delimiter cycling and escapes",
+    "-z",
+    "shared stdin (-)",
+    "file inputs"
+  ],
+  "excluded": [
+    "CLI help/version",
+    "failed I/O",
+    "invalid delimiter syntax",
+    "non-C locales",
+    "non-Linux platforms"
+  ],
+  "trusted": "../common/capture.rs"
+}

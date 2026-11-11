@@ -1,0 +1,73 @@
+{
+  "utility": "factor",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "factor.rs",
+  "trusted": "trusted.rs",
+  "sources": [
+    "factor.rs"
+  ],
+  "runtime": {},
+  "source_overrides": {
+    "runtime/stdio.rs": "stdio.rs"
+  },
+  "runtime_files": [
+    "stdio.rs"
+  ],
+  "shared_runtime": {
+    "factor_library.rs": {
+      "big_factors": "::num_prime::nt_funcs::factors",
+      "positive_overflow": "::std::num::ParseIntError::kind",
+      "entries": "::std::iter::IntoIterator::into_iter",
+      "delimiter_positions": "::memchr::memchr3_iter",
+      "split": "::std::io::BufRead::split",
+      "one": "::std::fmt::format",
+      "two": "::std::fmt::format",
+      "invalid": "::std::io::Error::new"
+    }
+  },
+  "io_hooks": {
+    "mod.rs": {
+      "execute": {
+        "write_factors_str": {},
+        "io_trusted::next_line": {}
+      },
+      "write_factors_str": {
+        "write_result": {}
+      },
+      "write_result": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    },
+    "runtime/stdio.rs": {
+      "next_line": {
+        "@effect": "line"
+      }
+    }
+  },
+  "modes": {
+    "all": "true"
+  },
+  "included": [
+    "number operands",
+    "stdin tokenization and NUL handling",
+    "u64/u128/BigUint paths",
+    "default repeated factors",
+    "-h/--exponents"
+  ],
+  "excluded": [
+    "CLI parsing/help/version",
+    "stderr and exit status",
+    "failed I/O",
+    "non-Linux platforms",
+    "non-C locales"
+  ],
+  "adaptations": [
+    "The existing main processing loop is exposed with supplied input/output handles.",
+    "The std::io::Split loop uses next_line explicitly so each iterator read advances the shared stdin state.",
+    "Formatting macros use thin standard-library wrappers; factorization, parsing, tokenization and output branches remain measured utility code."
+  ],
+  "frontend_check": true
+}

@@ -1,0 +1,71 @@
+{
+  "utility": "seq",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "seq.rs",
+  "trusted": "trusted.rs",
+  "sources": [
+    "seq.rs",
+    "number.rs"
+  ],
+  "runtime": {},
+  "source_overrides": {
+    "runtime/stdio.rs": "../common/stdio.rs"
+  },
+  "runtime_files": [
+    "stdio.rs"
+  ],
+  "shared_runtime": {
+    "seq_library.rs": {
+      "flush": "::std::io::Write::flush",
+      "parse": "::uucore::format::Format::parse",
+      "render": "::uucore::format::Format::fmt",
+      "decimal_formatter": "::uucore::format::num_format::Float",
+      "shortest_formatter": "::uucore::format::num_format::Float"
+    }
+  },
+  "io_hooks": {
+    "mod.rs": {
+      "execute": {
+        "print_seq": {}
+      },
+      "print_seq": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        },
+        "fast_print_seq": {}
+      },
+      "fast_print_seq": {
+        "io_trusted::write_all": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    }
+  },
+  "modes": {
+    "all": "true"
+  },
+  "included": [
+    "finite nonzero-increment ranges",
+    "integer fast path",
+    "decimal slow path",
+    "-s",
+    "-t",
+    "-w",
+    "-f"
+  ],
+  "excluded": [
+    "CLI parsing/help/version and numeric token decoding",
+    "nonterminating/nonfinite ranges",
+    "failed I/O",
+    "invalid formats",
+    "non-Linux platforms",
+    "non-C locales"
+  ],
+  "adaptations": [
+    "CLI decoding supplies numeric values and the original precision metadata; all formatting options remain in scope.",
+    "print_seq receives its writer from the caller; library formatting is rendered to bytes before the state-aware write.",
+    "The integer increment fast path, decimal loop, representation choices and output branches are retained."
+  ],
+  "frontend_check": true
+}

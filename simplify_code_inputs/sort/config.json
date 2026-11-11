@@ -1,0 +1,130 @@
+{
+  "utility": "sort",
+  "snapshot": "../..",
+  "edition": "2024",
+  "root": "sort.rs",
+  "io_adaptation": "Ghost state follows I/O calls; initial stdout is combined with captured writes.",
+  "generated_apis": {
+    "crate::original::chunks::Chunk": {
+      "crate": "self_cell",
+      "macro": "self_cell",
+      "owner": "Chunk",
+      "file": "original/chunks.rs",
+      "reference": "original/chunks.rs",
+      "methods": [
+        "new", "try_new", "try_new_or_recover",
+        "borrow_owner", "borrow_dependent",
+        "with_dependent", "with_dependent_mut", "into_owner"
+      ]
+    }
+  },
+  "sources": [
+    "sort.rs",
+    "buffer_hint.rs",
+    "check.rs",
+    "chunks.rs",
+    "custom_str_cmp.rs",
+    "diagnostics.rs",
+    "ext_sort/mod.rs",
+    "ext_sort/threaded.rs",
+    "ext_sort/wasi.rs",
+    "merge.rs",
+    "numeric_str_cmp.rs",
+    "tmp_dir.rs"
+  ],
+  "runtime": {
+    "trusted_common": "common.rs",
+    "trusted": "sort.rs",
+    "proof": "sort_callbacks.rs"
+  },
+  "io_hooks": {
+    "mod.rs": {
+      "print_sorted": {
+        ".write": {},
+        "crate::original::trusted::output_writer": {}
+      },
+      "Line::write": {
+        "crate::original::trusted::write_output": {
+          "rename": "crate::trusted_common::io::write_state"
+        }
+      }
+    },
+    "ext_sort/threaded.rs": {
+      "ext_sort": {
+        "reader_writer::<_,WriteablePlainTmpFile>": {}
+      },
+      "reader_writer": {
+        "merge::merge_with_file_limit::<_,_,Tmp>": {},
+        "print_memory_chunk": {},
+        "print_memory_chunks": {},
+        "print_sorted": {}
+      },
+      "print_memory_chunk": {
+        "print_sorted": {}
+      },
+      "print_memory_chunks": {
+        "print_sorted": {}
+      }
+    },
+    "merge.rs": {
+      "merge_with_file_limit": {
+        ".write_all": {},
+        ".write_all_to": {
+          "state": "&mut Ghost(crate::proof_common::State { files: state@.files, fd_table: state@.fd_table.insert(1, (Seq::<u8>::empty(), 0nat)) })"
+        },
+        "merge_with_file_limit::<_,_,Tmp>": {}
+      },
+      "FileMerger::write_all": {
+        ".write_all_to": {},
+        "crate::original::trusted::output_writer": {}
+      },
+      "FileMerger::write_all_to": {
+        ".write_next": {}
+      },
+      "FileMerger::write_next": {
+        "write_merge_line": {}
+      },
+      "write_merge_line": {
+        ".write": {}
+      }
+    },
+    "runtime/sort.rs": {
+      "output_writer": {}
+    }
+  },
+  "modes": {
+    "full": "true"
+  },
+  "included": [
+    "default",
+    "-n",
+    "-h",
+    "-g",
+    "-M",
+    "-b",
+    "-f",
+    "-d",
+    "-i",
+    "-r",
+    "-u",
+    "-z",
+    "-k",
+    "-t separator",
+    "file inputs",
+    "shared stdin (-)"
+  ],
+  "excluded": [
+    "-R/--random-sort (global and key-local)",
+    "-V/--version-sort (global and key-local)",
+    "-s/--stable",
+    "-m",
+    "-c/-C",
+    "--debug",
+    "CLI help/version",
+    "resource/compression configuration",
+    "failed I/O",
+    "non-C locales",
+    "non-Linux platforms"
+  ],
+  "trusted": "../common/proof.rs"
+}
