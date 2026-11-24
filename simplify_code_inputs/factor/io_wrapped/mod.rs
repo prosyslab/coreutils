@@ -1,0 +1,394 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+
+use clap::{Arg, ArgAction, Command};
+use memchr::memchr3_iter;
+use num_bigint::BigUint;
+use num_prime::nt_funcs::{factorize64, factorize128, factors};
+use std::collections::BTreeMap;
+use std::fmt::Display;
+use std::io::BufRead;
+use std::io::{self, Write, stdin, stdout};
+use std::iter::once;
+use std::num::IntErrorKind;
+use uucore::display::Quotable;
+#[cfg(not(verus_keep_ghost))]
+use uucore::error::UResult;
+use uucore::error::{FromIo, USimpleError, set_exit_code, strip_errno};
+use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
+type UResult<T> = std::io::Result<T>;
+use uucore::translate;
+use uucore::{format_usage, show_error, show_if_err};
+#[path = "runtime/stdio.rs"]
+mod io_trusted;
+use crate::trusted as format_trusted;
+mod options {
+    pub static EXPONENTS: &str = "exponents";
+    pub static HELP: &str = "help";
+    pub static NUMBER: &str = "NUMBER";
+}
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+const LF: u8 = b'\n';
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+const CR: u8 = b'\r';
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+const DELIM_SPACE: u8 = b' ';
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+const DELIM_TAB: u8 = b'\t';
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+const DELIM_NULL: u8 = b'\0';
+#[cfg_attr(not(verus_keep_ghost), derive(Debug, PartialEq, Eq))]
+#[cfg_attr(verus_keep_ghost, verifier::verify)]
+enum Number {
+    U64(u64),
+    U128(u128),
+    BigUint(BigUint),
+}
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+# [cfg_attr (verus_keep_ghost , verus_spec (with state : & mut vstd :: prelude :: Ghost < crate :: proof_common :: State > ,))]
+fn write_factors_str(
+    num_str: &[u8],
+    w: &mut io::BufWriter<impl Write>,
+    print_exponents: bool,
+) -> UResult<()> {
+    let parsed = parse_num(num_str);
+    #[cfg(not(verus_keep_ghost))]
+    show_if_err!(&parsed);
+    let Ok(x) = parsed else {
+        return Ok(());
+    };
+    let result = match x {
+        Number::U64(x) if x > 1 => {
+            # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+            let io_result = write_result(w, &x, factorize64(x), print_exponents);
+            io_result
+        }
+        Number::U64(x) => {
+            # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+            let io_result = write_result(w, &x, BTreeMap::<u64, usize>::new(), print_exponents);
+            io_result
+        }
+        Number::U128(x) => {
+            # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+            let io_result = write_result(w, &x, factorize128(x), print_exponents);
+            io_result
+        }
+        Number::BigUint(x) => {
+            let (prime_factors, remaining) = format_trusted::big_factors(x.clone());
+            if remaining.is_some() {
+                #[cfg(not(verus_keep_ghost))]
+                return Err(USimpleError::new(
+                    1,
+                    translate!("factor-error-factorization-incomplete"),
+                ));
+                #[cfg(verus_keep_ghost)]
+                return Err(format_trusted::invalid("factorization incomplete"));
+            }
+            {
+                # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+                let io_result = write_result(w, &x, prime_factors, print_exponents);
+                io_result
+            }
+        }
+    };
+    #[cfg(not(verus_keep_ghost))]
+    {
+        result.map_err_context(|| translate!("factor-error-write-error"))
+    }
+    #[cfg(verus_keep_ghost)]
+    {
+        result
+    }
+}
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+fn parse_num(slice: &[u8]) -> UResult<Number> {
+    let err_invalid = |s: &str| {
+        #[cfg(not(verus_keep_ghost))]
+        {
+            USimpleError::new(
+                1,
+                format!("{} {}", s.quote(), translate!("factor-error-invalid-int")),
+            )
+        }
+        #[cfg(verus_keep_ghost)]
+        {
+            format_trusted::invalid(s)
+        }
+    };
+    let num = str::from_utf8(slice).map_err(|_error| {
+        #[cfg(not(verus_keep_ghost))]
+        {
+            err_invalid(&NumError(slice).to_string())
+        }
+        #[cfg(verus_keep_ghost)]
+        {
+            err_invalid("invalid UTF-8")
+        }
+    })?;
+    match num.parse::<u64>() {
+        Ok(x) => return Ok(Number::U64(x)),
+        Err(e) if format_trusted::positive_overflow(&e) => {}
+        Err(_) => return Err(err_invalid(num)),
+    }
+    match num.parse::<u128>() {
+        Ok(x) => return Ok(Number::U128(x)),
+        Err(e) if format_trusted::positive_overflow(&e) => {}
+        Err(_) => return Err(err_invalid(num)),
+    }
+    num.parse::<BigUint>()
+        .map(|value| Number::BigUint(value))
+        .map_err(|_error| err_invalid(num))
+}
+#[doc = " This is a newtype wrapper over a potentially malformed UTF-8"]
+#[doc = " string of a number, which has an optimized [`Display`] impl"]
+#[doc = " matching GNU's formatting. This can be removed in favor of"]
+#[doc = " the C quoting in uucore once support for byte slices is added."]
+#[repr(transparent)]
+#[cfg(not(verus_keep_ghost))]
+struct NumError<'a>(&'a [u8]);
+#[cfg(not(verus_keep_ghost))]
+impl Display for NumError<'_> {
+    #[doc = " This function formats the valid string segments and displays"]
+    #[doc = " the invalid ones as escaped octal, like GNU. For example, the"]
+    #[doc = " (escaped) string \"\\xFFabc\\x1C\" is formatted as \"\\377abc\\034\"."]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for chunk in self.0.utf8_chunks() {
+            f.write_str(chunk.valid())?;
+            for byte_ref in chunk.invalid() {
+                let b = *byte_ref;
+                write!(f, "\\{b:03o}")?;
+            }
+        }
+        Ok(())
+    }
+}
+#[doc = " Writing out the prime factors for integers"]
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+# [cfg_attr (verus_keep_ghost , verus_spec (with state : & mut vstd :: prelude :: Ghost < crate :: proof_common :: State > ,))]
+fn write_result(
+    w: &mut io::BufWriter<impl Write>,
+    x: &impl Display,
+    factorization: BTreeMap<impl Display, usize>,
+    print_exponents: bool,
+) -> io::Result<()> {
+    {
+        # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+        let io_result =
+            crate::trusted_common::io::write_state(w, format_trusted::one("", x, ":").as_bytes());
+        io_result
+    }?;
+    for (factor, n) in format_trusted::entries(factorization) {
+        if print_exponents {
+            if n > 1 {
+                {
+                    # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+                    let io_result = crate::trusted_common::io::write_state(
+                        w,
+                        format_trusted::two(" ", &factor, "^", &n).as_bytes(),
+                    );
+                    io_result
+                }?;
+            } else {
+                {
+                    # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+                    let io_result = crate::trusted_common::io::write_state(
+                        w,
+                        format_trusted::one(" ", &factor, "").as_bytes(),
+                    );
+                    io_result
+                }?;
+            }
+        } else {
+            {
+                # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+                let io_result = crate::trusted_common::io::write_state(
+                    w,
+                    format_trusted::one(" ", &factor, "").repeat(n).as_bytes(),
+                );
+                io_result
+            }?;
+        }
+    }
+    {
+        # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+        let io_result = crate::trusted_common::io::write_state(w, &[LF]);
+        io_result
+    }?;
+    w.flush()
+}
+#[cfg_attr(verus_keep_ghost, verus_verify)]
+# [cfg_attr (verus_keep_ghost , verus_spec (with state : & mut vstd :: prelude :: Ghost < crate :: proof_common :: State > ,))]
+pub(crate) fn execute<R: BufRead, W: Write>(
+    numbers: &[String],
+    input: &mut R,
+    w: &mut io::BufWriter<W>,
+    print_exponents: bool,
+) -> UResult<()> {
+    if !numbers.is_empty() {
+        for number in numbers {
+            {
+                # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+                let io_result = write_factors_str(number.trim().as_bytes(), w, print_exponents);
+                io_result
+            }?;
+        }
+    } else {
+        let mut lines = format_trusted::split(input, LF);
+        while let Some(line) = {
+            # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+            let io_result = io_trusted::next_line(&mut lines);
+            io_result
+        } {
+            match line {
+                Ok(line) => {
+                    let le = if cfg!(windows) && line.last() == Some(&CR) {
+                        line.len() - 1
+                    } else {
+                        line.len()
+                    };
+                    let (mut display, mut prev) = (true, 0);
+                    for i in format_trusted::delimiter_positions(
+                        DELIM_SPACE,
+                        DELIM_TAB,
+                        DELIM_NULL,
+                        &line,
+                        le,
+                    ) {
+                        let has_null = line.get(i) == Some(&DELIM_NULL);
+                        if display && (prev != i || has_null) {
+                            {
+                                # [cfg_attr (verus_keep_ghost , verus_spec (with & mut * state))]
+                                let io_result =
+                                    write_factors_str(&line[prev..i], w, print_exponents);
+                                io_result
+                            }?;
+                        }
+                        display = !has_null;
+                        prev = i + 1;
+                    }
+                }
+                Err(e) => {
+                    #[cfg(not(verus_keep_ghost))]
+                    {
+                        set_exit_code(1);
+                        show_error!(
+                            "{}",
+                            translate ! ("factor-error-reading-input" , "error" => strip_errno (& e))
+                        );
+                        return Ok(());
+                    }
+                    #[cfg(verus_keep_ghost)]
+                    return Err(e);
+                }
+            }
+        }
+    }
+    w.flush()?;
+    Ok(())
+}
+#[cfg(not(uutils_factor_all))]
+#[uucore::main]
+pub fn uumain(args: impl uucore::Args) -> UResult<()> {
+    let matches = uucore::clap_localization::handle_clap_result(uu_app(), args)?;
+    let print_exponents = matches.get_flag(options::EXPONENTS);
+    let stdout = stdout();
+    let mut w = io::BufWriter::with_capacity(4 * 1024, stdout.lock());
+    if let Some(values) = matches.get_many::<String>(options::NUMBER) {
+        for number in values {
+            write_factors_str(number.trim().as_bytes(), &mut w, print_exponents)?;
+        }
+    } else {
+        let stdin = stdin();
+        let lines = stdin.lock().split(LF);
+        for line in lines {
+            match line {
+                Ok(line) => {
+                    let le = if cfg!(windows) && line.last() == Some(&CR) {
+                        line.len() - 1
+                    } else {
+                        line.len()
+                    };
+                    let (mut display, mut prev) = (true, 0);
+                    for i in memchr3_iter(DELIM_SPACE, DELIM_TAB, DELIM_NULL, &line).chain(once(le))
+                    {
+                        let has_null = line.get(i) == Some(&DELIM_NULL);
+                        if display && (prev != i || has_null) {
+                            write_factors_str(&line[prev..i], &mut w, print_exponents)?;
+                        }
+                        (display, prev) = (!has_null, i + 1);
+                    }
+                }
+                Err(e) => {
+                    set_exit_code(1);
+                    show_error!(
+                        "{}",
+                        translate ! ("factor-error-reading-input" , "error" => strip_errno (& e))
+                    );
+                    return Ok(());
+                }
+            }
+        }
+    }
+    if let Err(e) = w.flush() {
+        show_error!("{e}");
+    }
+    Ok(())
+}
+#[cfg(not(uutils_factor_all))]
+pub fn uu_app() -> Command {
+    Command::new("factor")
+        .version(uucore::crate_version!())
+        .help_template(uucore::localized_help_template(uucore::util_name()))
+        .about(translate!("factor-about"))
+        .override_usage(format_usage(&translate!("factor-usage")))
+        .infer_long_args(true)
+        .disable_help_flag(true)
+        .args_override_self(true)
+        .arg(Arg::new(options::NUMBER).action(ArgAction::Append))
+        .arg(
+            Arg::new(options::EXPONENTS)
+                .short('h')
+                .long(options::EXPONENTS)
+                .help(translate!("factor-help-exponents"))
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::HELP)
+                .long(options::HELP)
+                .help(translate!("factor-help-help"))
+                .action(ArgAction::Help),
+        )
+}
+#[cfg(test)]
+mod tests {
+    use crate::original::Number;
+    use crate::original::parse_num;
+    #[test]
+    fn test_correct_parsing() {
+        const U128_MAX_ONE: &str = "340282366920938463463374607431768211456";
+        let zero = parse_num(b"0").unwrap();
+        let u64_max = parse_num(u64::MAX.to_string().as_bytes()).unwrap();
+        let u128_one = parse_num((u64::MAX as u128 + 1).to_string().as_bytes()).unwrap();
+        let u128_max = parse_num(u128::MAX.to_string().as_bytes()).unwrap();
+        let bigint = parse_num(U128_MAX_ONE.as_bytes()).unwrap();
+        assert_eq!(
+            (
+                Number::U64(0),
+                Number::U64(u64::MAX),
+                Number::U128(u64::MAX as u128 + 1),
+                Number::U128(u128::MAX),
+                Number::BigUint(U128_MAX_ONE.parse().unwrap())
+            ),
+            (zero, u64_max, u128_one, u128_max, bigint)
+        );
+    }
+    #[test]
+    #[should_panic]
+    fn test_incorrect_parsing() {
+        parse_num(b"abcd").unwrap();
+        parse_num(b"12\x00\xFF\x1D").unwrap();
+    }
+}

@@ -16,28 +16,9 @@
   "runtime_files": [
     "tr_translate.rs"
   ],
-  "io_hooks": {
-    "operation.rs": {
-      "translate_input": {
-        "io_trusted::read": {
-          "rename": "crate::trusted_common::io::read_state"
-        },
-        "crate::original::simd::write_output": {}
-      }
-    },
-    "simd.rs": {
-      "process_input": {
-        "io_trusted::read": {
-          "rename": "crate::trusted_common::io::read_state"
-        },
-        "write_output": {}
-      },
-      "write_output": {
-        "io_trusted::write_all": {
-          "rename": "crate::trusted_common::io::write_state"
-        }
-      }
-    }
+  "source_overrides": {
+    "operation.rs": "io_wrapped/operation.rs",
+    "simd.rs": "io_wrapped/simd.rs"
   },
   "modes": {
     "delete": "matches!(args.mode, args::Mode::Delete)",

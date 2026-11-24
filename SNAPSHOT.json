@@ -101,7 +101,7 @@
     "uutils_tr_translate_and_squeeze"
   ],
   "verus_keep_ghost": true,
-  "note": "Proof-free executable projection of adapted modules; other tracked files are copied unchanged. Profiles define module roots, minimal library wrappers and per-operation State hooks. Functional contracts and utility proofs are written during the experiment.",
+  "note": "Proof-free executable projection of adapted modules; other tracked files are copied unchanged. Profiles define module roots and minimal library wrappers, and select sources with per-operation State updates already applied. Functional contracts and utility proofs are written during the experiment.",
   "prepared_utilities": [
     "dirname",
     "basename",

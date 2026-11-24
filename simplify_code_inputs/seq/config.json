@@ -10,7 +10,8 @@
   ],
   "runtime": {},
   "source_overrides": {
-    "runtime/stdio.rs": "../common/stdio.rs"
+    "runtime/stdio.rs": "../common/stdio.rs",
+    "mod.rs": "io_wrapped/mod.rs"
   },
   "runtime_files": [
     "stdio.rs"
@@ -22,24 +23,6 @@
       "render": "::uucore::format::Format::fmt",
       "decimal_formatter": "::uucore::format::num_format::Float",
       "shortest_formatter": "::uucore::format::num_format::Float"
-    }
-  },
-  "io_hooks": {
-    "mod.rs": {
-      "execute": {
-        "print_seq": {}
-      },
-      "print_seq": {
-        "io_trusted::write_all": {
-          "rename": "crate::trusted_common::io::write_state"
-        },
-        "fast_print_seq": {}
-      },
-      "fast_print_seq": {
-        "io_trusted::write_all": {
-          "rename": "crate::trusted_common::io::write_state"
-        }
-      }
     }
   },
   "modes": {

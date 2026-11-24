@@ -37,60 +37,11 @@
     "trusted": "sort.rs",
     "proof": "sort_callbacks.rs"
   },
-  "io_hooks": {
-    "mod.rs": {
-      "print_sorted": {
-        ".write": {},
-        "crate::original::trusted::output_writer": {}
-      },
-      "Line::write": {
-        "crate::original::trusted::write_output": {
-          "rename": "crate::trusted_common::io::write_state"
-        }
-      }
-    },
-    "ext_sort/threaded.rs": {
-      "ext_sort": {
-        "reader_writer::<_,WriteablePlainTmpFile>": {}
-      },
-      "reader_writer": {
-        "merge::merge_with_file_limit::<_,_,Tmp>": {},
-        "print_memory_chunk": {},
-        "print_memory_chunks": {},
-        "print_sorted": {}
-      },
-      "print_memory_chunk": {
-        "print_sorted": {}
-      },
-      "print_memory_chunks": {
-        "print_sorted": {}
-      }
-    },
-    "merge.rs": {
-      "merge_with_file_limit": {
-        ".write_all": {},
-        ".write_all_to": {
-          "state": "&mut Ghost(crate::proof_common::State { files: state@.files, fd_table: state@.fd_table.insert(1, (Seq::<u8>::empty(), 0nat)) })"
-        },
-        "merge_with_file_limit::<_,_,Tmp>": {}
-      },
-      "FileMerger::write_all": {
-        ".write_all_to": {},
-        "crate::original::trusted::output_writer": {}
-      },
-      "FileMerger::write_all_to": {
-        ".write_next": {}
-      },
-      "FileMerger::write_next": {
-        "write_merge_line": {}
-      },
-      "write_merge_line": {
-        ".write": {}
-      }
-    },
-    "runtime/sort.rs": {
-      "output_writer": {}
-    }
+  "source_overrides": {
+    "mod.rs": "io_wrapped/mod.rs",
+    "ext_sort/threaded.rs": "io_wrapped/ext_sort/threaded.rs",
+    "merge.rs": "io_wrapped/merge.rs",
+    "runtime/sort.rs": "io_wrapped/runtime/sort.rs"
   },
   "modes": {
     "full": "true"

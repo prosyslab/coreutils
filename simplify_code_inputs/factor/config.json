@@ -9,7 +9,8 @@
   ],
   "runtime": {},
   "source_overrides": {
-    "runtime/stdio.rs": "stdio.rs"
+    "runtime/stdio.rs": "io_wrapped/runtime/stdio.rs",
+    "mod.rs": "io_wrapped/mod.rs"
   },
   "runtime_files": [
     "stdio.rs"
@@ -24,27 +25,6 @@
       "one": "::std::fmt::format",
       "two": "::std::fmt::format",
       "invalid": "::std::io::Error::new"
-    }
-  },
-  "io_hooks": {
-    "mod.rs": {
-      "execute": {
-        "write_factors_str": {},
-        "io_trusted::next_line": {}
-      },
-      "write_factors_str": {
-        "write_result": {}
-      },
-      "write_result": {
-        "io_trusted::write_all": {
-          "rename": "crate::trusted_common::io::write_state"
-        }
-      }
-    },
-    "runtime/stdio.rs": {
-      "next_line": {
-        "@effect": "line"
-      }
     }
   },
   "modes": {

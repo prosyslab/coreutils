@@ -9,7 +9,8 @@
   ],
   "runtime": {},
   "source_overrides": {
-    "runtime/stdio.rs": "../common/stdio.rs"
+    "runtime/stdio.rs": "../common/stdio.rs",
+    "mod.rs": "io_wrapped/mod.rs"
   },
   "shared_runtime": {
     "codec_library.rs": {
@@ -20,15 +21,6 @@
   "runtime_files": [
     "stdio.rs"
   ],
-  "io_hooks": {
-    "mod.rs": {
-      "write_name": {
-        "io_trusted::write_all": {
-          "rename": "crate::trusted_common::io::write_state"
-        }
-      }
-    }
-  },
   "modes": {
     "all": "true"
   },
